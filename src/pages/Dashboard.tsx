@@ -9,13 +9,14 @@ import { supabase } from "@/lib/supabaseClient";
 
 const Dashboard = () => {
   const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [roomId, setRoomId] = useState("");
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
-    // Check current authentication state
+    // Check current authentication state and fetch profile
     const checkUser = async () => {
       try {
         const { data: { user }, error } = await supabase.auth.getUser();
@@ -27,6 +28,20 @@ const Dashboard = () => {
         }
 
         setUser(user);
+
+        // Fetch user profile data
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError) {
+          console.error('Error fetching profile:', profileError);
+          // Continue with just auth user data if profile fetch fails
+        } else {
+          setProfile(profileData);
+        }
       } catch (error) {
         console.error('Error checking user:', error);
         navigate("/signin");
@@ -38,12 +53,25 @@ const Dashboard = () => {
     checkUser();
 
     // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT' || !session) {
         setUser(null);
+        setProfile(null);
         navigate("/signin");
       } else if (session?.user) {
         setUser(session.user);
+        
+        // Fetch profile when user signs in
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
+        if (!profileError) {
+          setProfile(profileData);
+        }
+        
         setLoading(false);
       }
     });
@@ -114,8 +142,9 @@ const Dashboard = () => {
     return null;
   }
 
-  // Get user display name - try different fields that Supabase might have
-  const displayName = user.user_metadata?.name || 
+  // Get user display name from profile or fallback to email
+  const displayName = profile?.full_name || 
+                     user.user_metadata?.name || 
                      user.user_metadata?.full_name || 
                      user.email?.split('@')[0] || 
                      'User';
@@ -141,6 +170,11 @@ const Dashboard = () => {
                   </span>
                 </div>
                 <span className="text-sm text-muted-foreground">{displayName}</span>
+                {profile?.hearing_status && (
+                  <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full">
+                    {profile.hearing_status === 'deaf' ? 'Deaf/HoH' : 'Hearing'}
+                  </span>
+                )}
               </div>
               
               <Button variant="ghost" size="sm" onClick={handleLogout}>
