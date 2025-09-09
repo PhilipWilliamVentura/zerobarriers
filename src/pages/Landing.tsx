@@ -11,7 +11,7 @@ const Landing = () => {
         <div className="container mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <Video className="h-8 w-8 text-primary" />
-            <span className="text-2xl font-bold text-foreground">VideoCall</span>
+            <span className="text-2xl font-bold text-foreground">Zero Barriers</span>
           </div>
           <div className="flex items-center space-x-4">
             <Link to="/signin">
@@ -31,7 +31,7 @@ const Landing = () => {
             Connect with anyone,
             <br />
             <span className="bg-gradient-primary bg-clip-text text-transparent">
-              anywhere
+              Break any Barriers
             </span>
           </h1>
           <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto animate-slide-up">
@@ -56,7 +56,15 @@ const Landing = () => {
             <Camera className="h-12 w-12 text-primary mx-auto mb-4" />
             <h3 className="text-xl font-semibold mb-3">HD Video Quality</h3>
             <p className="text-muted-foreground">
-              Crystal clear video calls with adaptive quality that adjusts to your connection.
+              Crystal clear video calls with adaptive quality translation, linking deaf and non-deaf together.
+            </p>
+          </Card>
+
+          <Card className="p-8 text-center bg-gradient-surface border-0 shadow-medium hover:shadow-large transition-all">
+            <Shield className="h-12 w-12 text-primary mx-auto mb-4" />
+            <h3 className="text-xl font-semibold mb-3">Fast, Accurate & Reliable</h3>
+            <p className="text-muted-foreground">
+              Reduced subtitle latency by 50%, Achieved 85% caption accuracy and Improved meeting note efficiency by 70% using NLP summarization of transcripts.
             </p>
           </Card>
           
@@ -68,33 +76,6 @@ const Landing = () => {
             </p>
           </Card>
           
-          <Card className="p-8 text-center bg-gradient-surface border-0 shadow-medium hover:shadow-large transition-all">
-            <Shield className="h-12 w-12 text-primary mx-auto mb-4" />
-            <h3 className="text-xl font-semibold mb-3">Secure & Private</h3>
-            <p className="text-muted-foreground">
-              End-to-end encryption ensures your conversations stay private and secure.
-            </p>
-          </Card>
-        </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
-          <div>
-            <div className="text-3xl font-bold text-primary mb-2">99.9%</div>
-            <div className="text-muted-foreground">Uptime</div>
-          </div>
-          <div>
-            <div className="text-3xl font-bold text-primary mb-2">10M+</div>
-            <div className="text-muted-foreground">Users</div>
-          </div>
-          <div>
-            <div className="text-3xl font-bold text-primary mb-2">50ms</div>
-            <div className="text-muted-foreground">Low Latency</div>
-          </div>
-          <div>
-            <div className="text-3xl font-bold text-primary mb-2">24/7</div>
-            <div className="text-muted-foreground">Support</div>
-          </div>
         </div>
       </main>
     </div>

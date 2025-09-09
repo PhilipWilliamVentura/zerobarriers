@@ -6,11 +6,11 @@ import { Label } from "@/components/ui/label";
 import { Video, Eye, EyeOff } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/lib/supabaseClient";
 
 const SignUp = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
-    name: "",
     email: "",
     password: "",
     confirmPassword: ""
@@ -19,48 +19,79 @@ const SignUp = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    setIsLoading(true);
 
-    // Basic validation
     if (formData.password !== formData.confirmPassword) {
       toast({
-        title: "Passwords don't match",
-        description: "Please make sure both passwords are identical.",
+        title: "Error",
+        description: "Passwords do not match.",
         variant: "destructive",
       });
-      setIsLoading(false);
       return;
     }
 
-    if (formData.password.length < 6) {
-      toast({
-        title: "Password too short",
-        description: "Password must be at least 6 characters long.",
-        variant: "destructive",
-      });
-      setIsLoading(false);
-      return;
-    }
+    setIsLoading(true);
 
-    // Simulate API call
-    setTimeout(() => {
-      toast({
-        title: "Account created successfully!",
-        description: "Welcome to VideoCall. You can now start making calls.",
-      });
-      
-      // Store user data (in real app, this would be handled by Supabase)
-      localStorage.setItem("user", JSON.stringify({
-        name: formData.name,
+    try {
+      // 🔑 Create the account directly
+      const { data, error } = await supabase.auth.signUp({
         email: formData.email,
-        id: Math.random().toString(36).substr(2, 9)
-      }));
-      
-      navigate("/dashboard");
+        password: formData.password,
+      });
+
+      if (error) {
+        // Handle specific error for existing user
+        if (error.message.includes('already registered')) {
+          toast({
+            title: "Error",
+            description: "An account with this email already exists. Please sign in instead.",
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "Error",
+            description: error.message,
+            variant: "destructive",
+          });
+        }
+        return;
+      }
+
+      // Check if email confirmation is required
+      if (data.user && !data.user.email_confirmed_at) {
+        toast({
+          title: "Success!",
+          description: "Your account has been created. Please check your email to verify before signing in.",
+        });
+        // Navigate to sign in page instead of dashboard
+        navigate("/signin");
+      } else if (data.user && data.user.email_confirmed_at) {
+        // User is immediately confirmed (if email confirmation is disabled)
+        toast({
+          title: "Success!",
+          description: "Your account has been created successfully.",
+        });
+        navigate("/dashboard");
+      } else {
+        // Fallback
+        toast({
+          title: "Success!",
+          description: "Your account has been created. Please check your email if verification is required.",
+        });
+        navigate("/signin");
+      }
+
+    } catch (err) {
+      console.error('Signup error:', err);
+      toast({
+        title: "Unexpected Error",
+        description: err.message || "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   return (
@@ -69,31 +100,17 @@ const SignUp = () => {
         <div className="text-center mb-8">
           <Link to="/" className="inline-flex items-center space-x-2 text-2xl font-bold">
             <Video className="h-8 w-8 text-primary" />
-            <span>VideoCall</span>
+            <span>Zero Barriers</span>
           </Link>
         </div>
 
         <Card className="shadow-large border-0 bg-card/95 backdrop-blur">
           <CardHeader className="text-center">
             <CardTitle className="text-2xl">Create your account</CardTitle>
-            <CardDescription>
-              Join millions of users connecting worldwide
-            </CardDescription>
+            <CardDescription>Join millions of users connecting worldwide</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Full Name</Label>
-                <Input
-                  id="name"
-                  type="text"
-                  placeholder="Enter your full name"
-                  value={formData.name}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  required
-                />
-              </div>
-              
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -101,11 +118,10 @@ const SignUp = () => {
                   type="email"
                   placeholder="Enter your email"
                   value={formData.email}
-                  onChange={(e) => setFormData({...formData, email: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   required
                 />
               </div>
-              
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
                 <div className="relative">
@@ -114,7 +130,7 @@ const SignUp = () => {
                     type={showPassword ? "text" : "password"}
                     placeholder="Create a password"
                     value={formData.password}
-                    onChange={(e) => setFormData({...formData, password: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     required
                   />
                   <Button
@@ -124,15 +140,10 @@ const SignUp = () => {
                     className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                     onClick={() => setShowPassword(!showPassword)}
                   >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </Button>
                 </div>
               </div>
-              
               <div className="space-y-2">
                 <Label htmlFor="confirmPassword">Confirm Password</Label>
                 <Input
@@ -140,21 +151,16 @@ const SignUp = () => {
                   type="password"
                   placeholder="Confirm your password"
                   value={formData.confirmPassword}
-                  onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
                   required
                 />
               </div>
-              
-              <Button 
-                type="submit" 
-                className="w-full" 
-                variant="hero"
-                disabled={isLoading}
-              >
+
+              <Button type="submit" className="w-full" variant="hero" disabled={isLoading}>
                 {isLoading ? "Creating Account..." : "Create Account"}
               </Button>
             </form>
-            
+
             <div className="mt-6 text-center text-sm">
               <span className="text-muted-foreground">Already have an account? </span>
               <Link to="/signin" className="text-primary hover:underline font-medium">

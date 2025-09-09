@@ -5,29 +5,79 @@ import { Input } from "@/components/ui/input";
 import { Video, Plus, Users, Clock, Phone, LogOut, Camera, Settings } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/lib/supabaseClient";
 
 const Dashboard = () => {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [roomId, setRoomId] = useState("");
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
-    const userData = localStorage.getItem("user");
-    if (!userData) {
-      navigate("/signin");
-      return;
-    }
-    setUser(JSON.parse(userData));
+    // Check current authentication state
+    const checkUser = async () => {
+      try {
+        const { data: { user }, error } = await supabase.auth.getUser();
+        
+        if (error || !user) {
+          console.log('No authenticated user, redirecting to signin');
+          navigate("/signin");
+          return;
+        }
+
+        setUser(user);
+      } catch (error) {
+        console.error('Error checking user:', error);
+        navigate("/signin");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkUser();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        setUser(null);
+        navigate("/signin");
+      } else if (session?.user) {
+        setUser(session.user);
+        setLoading(false);
+      }
+    });
+
+    // Cleanup subscription
+    return () => subscription.unsubscribe();
   }, [navigate]);
 
-  const handleLogout = () => {
-    localStorage.removeItem("user");
-    toast({
-      title: "Signed out successfully",
-      description: "Come back soon!",
-    });
-    navigate("/");
+  const handleLogout = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('Error signing out:', error);
+        toast({
+          title: "Error",
+          description: "Failed to sign out. Please try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      toast({
+        title: "Signed out successfully",
+        description: "Come back soon!",
+      });
+      navigate("/");
+    } catch (error) {
+      console.error('Unexpected error during signout:', error);
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleCreateRoom = () => {
@@ -47,9 +97,30 @@ const Dashboard = () => {
     navigate(`/call/${roomId}`);
   };
 
-  if (!user) {
-    return <div>Loading...</div>;
+  // Show loading state while checking authentication
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <Video className="h-12 w-12 mx-auto mb-4 animate-spin text-primary" />
+          <p className="text-lg">Loading...</p>
+        </div>
+      </div>
+    );
   }
+
+  // This shouldn't render if user is null (they'd be redirected)
+  if (!user) {
+    return null;
+  }
+
+  // Get user display name - try different fields that Supabase might have
+  const displayName = user.user_metadata?.name || 
+                     user.user_metadata?.full_name || 
+                     user.email?.split('@')[0] || 
+                     'User';
+
+  const displayEmail = user.email;
 
   return (
     <div className="min-h-screen bg-background">
@@ -59,17 +130,17 @@ const Dashboard = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Video className="h-8 w-8 text-primary" />
-              <span className="text-2xl font-bold">VideoCall</span>
+              <span className="text-2xl font-bold">Zero Barriers</span>
             </div>
             
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
                 <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
                   <span className="text-sm font-medium text-primary">
-                    {user.name?.charAt(0).toUpperCase()}
+                    {displayName.charAt(0).toUpperCase()}
                   </span>
                 </div>
-                <span className="text-sm text-muted-foreground">{user.name}</span>
+                <span className="text-sm text-muted-foreground">{displayName}</span>
               </div>
               
               <Button variant="ghost" size="sm" onClick={handleLogout}>
@@ -85,7 +156,7 @@ const Dashboard = () => {
       <main className="container mx-auto px-6 py-12">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-12">
-            <h1 className="text-4xl font-bold mb-4">Welcome back, {user.name}!</h1>
+            <h1 className="text-4xl font-bold mb-4">Welcome back, {displayName}!</h1>
             <p className="text-lg text-muted-foreground">
               Start a new meeting or join an existing one
             </p>

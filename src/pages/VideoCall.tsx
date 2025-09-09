@@ -167,7 +167,7 @@ const VideoCall = () => {
     
     toast({
       title: "Call ended",
-      description: "Thanks for using VideoCall!",
+      description: "Thanks for using Zero Barriers!",
     });
     
     navigate("/dashboard");
