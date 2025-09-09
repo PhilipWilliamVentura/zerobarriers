@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Video, Eye, EyeOff } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -13,7 +14,9 @@ const SignUp = () => {
   const [formData, setFormData] = useState({
     email: "",
     password: "",
-    confirmPassword: ""
+    confirmPassword: "",
+    fullName: "",
+    hearingStatus: "hearing" // "deaf" or "hearing"
   });
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
@@ -31,17 +34,25 @@ const SignUp = () => {
       return;
     }
 
+    if (!formData.fullName.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter your full name.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsLoading(true);
 
     try {
-      // 🔑 Create the account directly
+      // 🔑 Create the account
       const { data, error } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
       });
 
       if (error) {
-        // Handle specific error for existing user
         if (error.message.includes('already registered')) {
           toast({
             title: "Error",
@@ -58,23 +69,45 @@ const SignUp = () => {
         return;
       }
 
-      // Check if email confirmation is required
+      // 👤 Create user profile with additional data
+      if (data.user) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert([
+            {
+              id: data.user.id,
+              full_name: formData.fullName.trim(),
+              hearing_status: formData.hearingStatus,
+              email: formData.email,
+              created_at: new Date().toISOString(),
+            }
+          ]);
+
+        if (profileError) {
+          console.error('Profile creation error:', profileError);
+          // Don't block signup for profile errors, but log them
+          toast({
+            title: "Account Created",
+            description: "Account created but profile setup incomplete. You can update your profile later.",
+            variant: "default",
+          });
+        }
+      }
+
+      // Handle email confirmation flow
       if (data.user && !data.user.email_confirmed_at) {
         toast({
           title: "Success!",
           description: "Your account has been created. Please check your email to verify before signing in.",
         });
-        // Navigate to sign in page instead of dashboard
         navigate("/signin");
       } else if (data.user && data.user.email_confirmed_at) {
-        // User is immediately confirmed (if email confirmation is disabled)
         toast({
           title: "Success!",
           description: "Your account has been created successfully.",
         });
         navigate("/dashboard");
       } else {
-        // Fallback
         toast({
           title: "Success!",
           description: "Your account has been created. Please check your email if verification is required.",
@@ -112,6 +145,36 @@ const SignUp = () => {
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
+                <Label htmlFor="fullName">Full Name</Label>
+                <Input
+                  id="fullName"
+                  type="text"
+                  placeholder="Enter your full name"
+                  value={formData.fullName}
+                  onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div className="space-y-3">
+                <Label>I am</Label>
+                <RadioGroup
+                  value={formData.hearingStatus}
+                  onValueChange={(value) => setFormData({ ...formData, hearingStatus: value })}
+                  className="flex flex-col space-y-2"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="deaf" id="deaf" />
+                    <Label htmlFor="deaf" className="cursor-pointer">Deaf or Hard of Hearing</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="hearing" id="hearing" />
+                    <Label htmlFor="hearing" className="cursor-pointer">Hearing</Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
                   id="email"
@@ -122,6 +185,7 @@ const SignUp = () => {
                   required
                 />
               </div>
+
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
                 <div className="relative">
@@ -144,6 +208,7 @@ const SignUp = () => {
                   </Button>
                 </div>
               </div>
+
               <div className="space-y-2">
                 <Label htmlFor="confirmPassword">Confirm Password</Label>
                 <Input
