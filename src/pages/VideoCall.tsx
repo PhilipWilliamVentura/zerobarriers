@@ -277,13 +277,17 @@ const VideoCall = () => {
           await handleIceCandidate(payload.candidate);
           break;
         case 'join':
-          // Someone joined, create and send offer if we're in stable state
+          // Use deterministic connection initiation: user with lexicographically smaller ID initiates
           console.log('Someone joined, current signaling state:', peerConnection.current?.signalingState);
-          if (peerConnection.current && peerConnection.current.signalingState === 'stable' && currentUser.isInitiator) {
-            // Small delay to ensure both peers are ready
-            setTimeout(() => {
-              createOffer();
-            }, 1000);
+          if (peerConnection.current && peerConnection.current.signalingState === 'stable') {
+            const shouldInitiate = currentUser.id < payload.user?.id;
+            console.log('Should initiate connection:', shouldInitiate, 'My ID:', currentUser.id, 'Their ID:', payload.user?.id);
+            
+            if (shouldInitiate) {
+              setTimeout(() => {
+                createOffer();
+              }, 1000);
+            }
           }
           break;
       }
