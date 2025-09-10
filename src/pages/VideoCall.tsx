@@ -39,6 +39,8 @@ const VideoCall = () => {
   const pollingInterval = useRef(null);
   const lastMessageId = useRef(null);
 
+  const [iceConnectionState, setIceConnectionState] = useState<string>('new');
+
   // WebRTC configuration
   const rtcConfiguration = {
     iceServers: [
@@ -67,17 +69,6 @@ const VideoCall = () => {
     };
     getCurrentUser();
   }, []);
-
-  // Create signaling table if needed (run this SQL in Supabase)
-  // CREATE TABLE signaling_messages (
-  //   id BIGSERIAL PRIMARY KEY,
-  //   room_id TEXT NOT NULL,
-  //   from_user_id UUID NOT NULL,
-  //   to_user_id UUID,
-  //   message_type TEXT NOT NULL,
-  //   payload JSONB NOT NULL,
-  //   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-  // );
 
   // Initialize signaling with database polling
   useEffect(() => {
@@ -125,6 +116,17 @@ const VideoCall = () => {
       console.error('Error in polling:', error);
     }
   };
+
+  // Fix: Handle remote stream properly
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+      // Force play the remote video
+      remoteVideoRef.current.play().catch(error => {
+        console.error('Error playing remote video:', error);
+      });
+    }
+  }, [remoteStream]);
 
   useEffect(() => {
     if (localVideoRef.current && localStream) {
@@ -211,19 +213,27 @@ const VideoCall = () => {
       peerConnection.current.addTrack(track, stream);
     });
 
-    // Handle remote stream
+    // Fix: Handle remote stream properly
     peerConnection.current.ontrack = (event) => {
+      console.log('Remote track received:', event);
       const [remoteStream] = event.streams;
       setRemoteStream(remoteStream);
       
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = remoteStream;
-      }
+      // Force update the video element
+      setTimeout(() => {
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = remoteStream;
+          remoteVideoRef.current.play().catch(error => {
+            console.error('Error playing remote video:', error);
+          });
+        }
+      }, 100);
     };
 
     // Handle ICE candidates
     peerConnection.current.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log('Sending ICE candidate:', event.candidate);
         sendSignalingMessage('ice-candidate', {
           candidate: event.candidate
         });
@@ -232,6 +242,7 @@ const VideoCall = () => {
 
     // Handle connection state changes
     peerConnection.current.onconnectionstatechange = () => {
+      console.log('Connection state changed:', peerConnection.current.connectionState);
       setConnectionStatus(peerConnection.current.connectionState);
       
       if (peerConnection.current.connectionState === 'connected') {
@@ -241,9 +252,19 @@ const VideoCall = () => {
         });
       }
     };
+
+    // Add ice connection state logging
+    peerConnection.current.oniceconnectionstatechange = () => {
+      const state = peerConnection.current?.iceConnectionState;
+      console.log('ICE connection state:', state);
+      if (state) {
+        setIceConnectionState(state);
+      }
+    };
   };
 
   const handleSignalingMessage = async (payload, messageType) => {
+    console.log('Handling signaling message:', messageType, payload);
     try {
       switch (messageType) {
         case 'offer':
@@ -256,9 +277,13 @@ const VideoCall = () => {
           await handleIceCandidate(payload.candidate);
           break;
         case 'join':
-          // Someone joined, create and send offer
+          // Someone joined, create and send offer if we're in stable state
+          console.log('Someone joined, current signaling state:', peerConnection.current?.signalingState);
           if (peerConnection.current && peerConnection.current.signalingState === 'stable') {
-            await createOffer();
+            // Small delay to ensure both peers are ready
+            setTimeout(() => {
+              createOffer();
+            }, 1000);
           }
           break;
       }
@@ -271,8 +296,10 @@ const VideoCall = () => {
     if (!peerConnection.current) return;
 
     try {
+      console.log('Creating offer...');
       const offer = await peerConnection.current.createOffer();
       await peerConnection.current.setLocalDescription(offer);
+      console.log('Offer created and set as local description');
       
       await sendSignalingMessage('offer', { offer: offer });
     } catch (error) {
@@ -284,9 +311,11 @@ const VideoCall = () => {
     if (!peerConnection.current) return;
 
     try {
+      console.log('Handling offer...');
       await peerConnection.current.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await peerConnection.current.createAnswer();
       await peerConnection.current.setLocalDescription(answer);
+      console.log('Answer created and set as local description');
       
       await sendSignalingMessage('answer', { answer: answer });
     } catch (error) {
@@ -298,7 +327,9 @@ const VideoCall = () => {
     if (!peerConnection.current) return;
 
     try {
+      console.log('Handling answer...');
       await peerConnection.current.setRemoteDescription(new RTCSessionDescription(answer));
+      console.log('Answer set as remote description');
     } catch (error) {
       console.error('Error handling answer:', error);
     }
@@ -308,6 +339,7 @@ const VideoCall = () => {
     if (!peerConnection.current) return;
 
     try {
+      console.log('Adding ICE candidate:', candidate);
       await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (error) {
       console.error('Error adding ICE candidate:', error);
@@ -379,12 +411,20 @@ const VideoCall = () => {
       localVideoRef.current.srcObject = newStream;
     }
 
-    const sender = peerConnection.current.getSenders().find(s => 
+    // Replace video track
+    const videoSender = peerConnection.current.getSenders().find(s => 
       s.track && s.track.kind === 'video'
     );
-    
-    if (sender) {
-      await sender.replaceTrack(newStream.getVideoTracks()[0]);
+    if (videoSender) {
+      await videoSender.replaceTrack(newStream.getVideoTracks()[0]);
+    }
+
+    // Replace audio track
+    const audioSender = peerConnection.current.getSenders().find(s => 
+      s.track && s.track.kind === 'audio'
+    );
+    if (audioSender) {
+      await audioSender.replaceTrack(newStream.getAudioTracks()[0]);
     }
   };
 
@@ -458,6 +498,13 @@ const VideoCall = () => {
             'bg-red-500/20 text-red-300'
           }`}>
             {connectionStatus}
+          </span>
+          <span className={`text-xs px-2 py-1 rounded-full ${
+            iceConnectionState === 'connected' || iceConnectionState === 'completed' ? 'bg-green-500/20 text-green-300' :
+            iceConnectionState === 'checking' || iceConnectionState === 'new' ? 'bg-yellow-500/20 text-yellow-300' :
+            'bg-red-500/20 text-red-300'
+          }`}>
+            ICE: {iceConnectionState}
           </span>
         </div>
         
