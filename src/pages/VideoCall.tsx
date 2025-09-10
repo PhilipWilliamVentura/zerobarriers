@@ -279,7 +279,7 @@ const VideoCall = () => {
         case 'join':
           // Someone joined, create and send offer if we're in stable state
           console.log('Someone joined, current signaling state:', peerConnection.current?.signalingState);
-          if (peerConnection.current && peerConnection.current.signalingState === 'stable') {
+          if (peerConnection.current && peerConnection.current.signalingState === 'stable' && currentUser.isInitiator) {
             // Small delay to ensure both peers are ready
             setTimeout(() => {
               createOffer();
