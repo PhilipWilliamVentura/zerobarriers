@@ -56,11 +56,8 @@ const VideoCall = () => {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      {
-    urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
-    username: 'webrtc',
-    credential: 'webrtc'
-  }
+        // Public TURN server for testing (do not use for production)
+        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
     ]
   };
 
