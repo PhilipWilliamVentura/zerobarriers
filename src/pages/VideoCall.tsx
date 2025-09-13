@@ -242,18 +242,8 @@ const VideoCall = () => {
     // Fix: Handle remote stream properly
     peerConnection.current.ontrack = (event) => {
       console.log('Remote track received:', event);
-      const [remoteStream] = event.streams;
-      setRemoteStream(remoteStream);
-      
-      // Force update the video element
-      setTimeout(() => {
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remoteStream;
-          remoteVideoRef.current.play().catch(error => {
-            console.error('Error playing remote video:', error);
-          });
-        }
-      }, 100);
+      const [stream] = event.streams;
+      setRemoteStream(stream); // this will trigger your useEffect to handle video.play()
     };
 
     // Handle ICE candidates
