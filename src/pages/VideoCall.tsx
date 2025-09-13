@@ -1,667 +1,633 @@
-import { useState, useEffect, useRef } from "react";
+// Add type declarations at the top
+declare global {
+  interface Window {
+    SpeechRecognition: typeof SpeechRecognition;
+    webkitSpeechRecognition: typeof SpeechRecognition;
+  }
+}
+
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  maxAlternatives: number;
+  start(): void;
+  stop(): void;
+  onresult: (event: SpeechRecognitionEvent) => void;
+  onerror: (event: SpeechRecognitionErrorEvent) => void;
+  onstart: () => void;
+  onend: () => void;
+}
+
+interface SpeechRecognitionEvent {
+  results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionErrorEvent {
+  error: string;
+}
+
+declare var SpeechRecognition: {
+  prototype: SpeechRecognition;
+  new(): SpeechRecognition;
+};
+
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { TranslationService } from '@/components/translation';
-import clsx from "clsx";
-import { 
-  Video, 
-  VideoOff, 
-  Mic, 
-  MicOff, 
-  MonitorSpeaker, 
-  Phone, 
-  Settings,
-  Users,
-  MessageSquare,
-  MoreVertical,
-  Copy,
-  UserPlus
-} from "lucide-react";
-import { useParams, useNavigate } from "react-router-dom";
-import { useToast } from "@/hooks/use-toast";
+import { Video, Mic, MicOff, ArrowLeft, VideoOff, Volume2, Activity, Play, Pause } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
 const VideoCall = () => {
-  const { roomId } = useParams();
-  const navigate = useNavigate();
-  const { toast } = useToast();
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const aslVideoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
   
-  const [isVideoOn, setIsVideoOn] = useState(true);
-  const [isAudioOn, setIsAudioOn] = useState(true);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [isCallStarted, setIsCallStarted] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('connecting');
-  const [currentUser, setCurrentUser] = useState(null);
+  // Video-based avatar states
+  const [currentVideo, setCurrentVideo] = useState("");
+  const [videoQueue, setVideoQueue] = useState<string[]>([]);
+  const [isPlayingASL, setIsPlayingASL] = useState(false);
   
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  const peerConnection = useRef<RTCPeerConnection | null>(null);
-  const pollingInterval = useRef(null);
-  const lastMessageId = useRef(null);
+  // Original states
+  const [recognizing, setRecognizing] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [webcamActive, setWebcamActive] = useState(false);
+  const [micActive, setMicActive] = useState(true);
+  const [avatarLoaded, setAvatarLoaded] = useState(true); // Always true for videos
+  const [recognitionActive, setRecognitionActive] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
 
-  const [iceConnectionState, setIceConnectionState] = useState<string>('new');
+  // Transcript
+  const [gloss, setGloss] = useState("");
 
-  // WebRTC configuration
-  const rtcConfiguration = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
-    ]
+  async function saveSessionValue(userId: string, value: string, ts = new Date()) {
+  const { data, error } = await supabase
+    .from("user_sessions")
+    .insert([{ user_id: userId, ts, value }]);
+
+  if (error) {
+    console.error("Error saving session:", error);
+  } else {
+    console.log("Saved:", data);
+  }
+}
+
+  // ASL video library - you can expand this with your actual video files
+  const aslVideoLibrary = {
+    so: "/videos/so.mp4",
+    you: "/videos/you.mp4",
+    understand: "/videos/understand.mp4",
+    translating: "/videos/translating.mp4",
+    // Fallback/demo videos
+    waiting: "https://www.youtube.com/watch?v=zm8_SDEYjtw",
+    demo2: "https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_1mb.mp4"
   };
 
-  // Get current user
-  useEffect(() => {
-    const getCurrentUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-        
-        setCurrentUser({
-          id: user.id,
-          name: profile?.full_name || user.email?.split('@')[0] || 'User',
-          email: user.email
-        });
+  // Sample phrases to ASL word mapping
+  const phraseToASL = {
+    "so": ["so"],
+    "you": ["you"],
+    "understand": ["understand"],
+    "translating": ["translating"],
+  };
+  
+  // Convert text/phrase to ASL videos
+  const translateToASL = useCallback((text: string) => {
+    const lowerText = text.toLowerCase().trim();
+    
+    // Check for direct phrase matches
+    for (const [phrase, aslWords] of Object.entries(phraseToASL)) {
+      if (lowerText.includes(phrase)) {
+        return aslWords;
       }
-    };
-    getCurrentUser();
+    }
+    
+    // Check for individual word matches
+    const words = lowerText.split(' ');
+    const aslVideos: string[] = [];
+    
+    words.forEach(word => {
+      const cleanWord = word.replace(/[^\w]/g, ''); // Remove punctuation
+      if (aslVideoLibrary[cleanWord as keyof typeof aslVideoLibrary]) {
+        aslVideos.push(cleanWord);
+      }
+    });
+    
+    // If no matches found, return a default demonstration
+    return aslVideos.length > 0 ? aslVideos : ["waiting"];
   }, []);
 
-  // Initialize signaling with database polling
-  useEffect(() => {
-    if (!roomId || !currentUser) return;
+  // Queue multiple ASL videos
+  const queueASLVideos = useCallback((videoKeys: string[]) => {
+    if (videoKeys.length === 0) return;
+    
+    setVideoQueue(videoKeys);
+    playASLVideo(videoKeys[0]);
+  }, []);
 
-    // Start polling for signaling messages
-    pollingInterval.current = setInterval(() => {
-      pollForSignalingMessages();
-    }, 1000);
+  // Initialize ASL video player
+  useEffect(() => {
+    if (aslVideoRef.current) {
+      const handleVideoEnded = () => {
+        setIsPlayingASL(false);
+        
+        // Play next video in queue
+        setVideoQueue(prevQueue => {
+          if (prevQueue.length > 1) {
+            const newQueue = prevQueue.slice(1);
+            playASLVideo(newQueue[0]);
+            return newQueue;
+          } else {
+            setCurrentVideo("");
+            return [];
+          }
+        });
+      };
+
+      aslVideoRef.current.addEventListener('ended', handleVideoEnded);
+      aslVideoRef.current.addEventListener('loadeddata', () => {
+        console.log('ASL video loaded successfully');
+      });
+      aslVideoRef.current.addEventListener('error', (e) => {
+        console.error('Error loading ASL video:', e);
+      });
+
+      return () => {
+        if (aslVideoRef.current) {
+          aslVideoRef.current.removeEventListener('ended', handleVideoEnded);
+        }
+      };
+    }
+  }, []);
+
+  // Initialize speech recognition
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      console.warn("Speech Recognition not supported in this browser");
+      setSpeechSupported(false);
+      return;
+    }
+
+    setSpeechSupported(true);
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.continuous = true; // Change to false for better control
+
+    recognition.onstart = () => {
+      console.log('Speech recognition started');
+      setRecognizing(true);
+      setSpeaking(true);
+    };
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      const transcript = event.results[event.results.length - 1][0].transcript.trim().toLowerCase();
+      console.log("Recognized speech:", transcript);
+
+      // Convert recognized phrase to ASL videos
+      const aslVideos = translateToASL(transcript);
+      queueASLVideos(aslVideos);
+    };
+
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      console.error("Speech recognition error:", event.error);
+      setRecognizing(false);
+      setSpeaking(false);
+      setRecognitionActive(false);
+    };
+
+    recognition.onend = () => {
+      console.log('Speech recognition ended');
+      setRecognizing(false);
+      setSpeaking(false);
+      setRecognitionActive(false);
+    };
+
+    recognitionRef.current = recognition;
 
     return () => {
-      if (pollingInterval.current) {
-        clearInterval(pollingInterval.current);
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
       }
     };
-  }, [roomId, currentUser]);
+  }, [translateToASL, queueASLVideos]);
 
-  const pollForSignalingMessages = async () => {
-    try {
-      let query = supabase
-        .from('signaling_messages')
-        .select('*')
-        .eq('room_id', roomId)
-        .neq('from_user_id', currentUser.id)
-        .order('created_at', { ascending: true });
-
-      if (lastMessageId.current) {
-        query = query.gt('id', lastMessageId.current);
-      }
-
-      const { data: messages, error } = await query;
-      
-      if (error) {
-        console.error('Error polling messages:', error);
-        return;
-      }
-
-      if (messages && messages.length > 0) {
-        for (const message of messages) {
-          await handleSignalingMessage(message.payload, message.message_type);
-          lastMessageId.current = message.id;
-        }
-      }
-    } catch (error) {
-      console.error('Error in polling:', error);
-    }
-  };
-
-  // Fix: Handle remote stream properly
-  useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-      // Force play the remote video
-      remoteVideoRef.current.play().catch(error => {
-        console.error('Error playing remote video:', error);
-      });
-    }
-  }, [remoteStream]);
-
-  useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-      localVideoRef.current.muted = true; // prevent echo
-      localVideoRef.current.play().catch(console.error);
-    }
-  }, [localStream]);
-
-  const sendSignalingMessage = async (messageType, payload) => {
-    try {
-      const { error } = await supabase
-        .from('signaling_messages')
-        .insert([
-          {
-            room_id: roomId,
-            from_user_id: currentUser.id,
-            message_type: messageType,
-            payload: payload
-          }
-        ]);
-
-      if (error) {
-        console.error('Error sending signaling message:', error);
-      }
-    } catch (error) {
-      console.error('Error in sendSignalingMessage:', error);
-    }
-  };
-
-  // Initialize media and WebRTC
-  useEffect(() => {
-    if (!currentUser) return;
+  // Play ASL video
+  const playASLVideo = (videoKey: string) => {
+    if (!aslVideoRef.current) return;
     
-    const initializeCall = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true
-        });
-        
-        setLocalStream(stream);
-        
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
+    setGloss(prev => (prev ? `${prev} ${videoKey}` : videoKey));
 
-        await initializePeerConnection(stream);
-        setIsCallStarted(true);
-
-        // Announce joining the room
-        await sendSignalingMessage('join', { 
-          user: currentUser,
-          timestamp: new Date().toISOString()
-        });
-        
-      } catch (error) {
-        console.error("Error accessing camera/microphone:", error);
-        toast({
-          title: "Camera/Microphone Error",
-          description: "Could not access camera or microphone. Please check permissions.",
-          variant: "destructive",
-        });
-      }
-    };
-
-    initializeCall();
+    const videoPath = aslVideoLibrary[videoKey as keyof typeof aslVideoLibrary] || aslVideoLibrary.waiting;
+    setCurrentVideo(videoKey);
+    setIsPlayingASL(true);
     
-    return () => {
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-      }
-      if (peerConnection.current) {
-        peerConnection.current.close();
-      }
-    };
-  }, [currentUser]);
-
-  const initializePeerConnection = async (stream) => {
-    peerConnection.current = new RTCPeerConnection(rtcConfiguration);
-
-    // Add local stream to peer connection
-    stream.getTracks().forEach(track => {
-      peerConnection.current.addTrack(track, stream);
-    });
-
-    // Fix: Handle remote stream properly
-    peerConnection.current.ontrack = (event) => {
-      console.log('Remote track received:', event);
-      const [remoteStream] = event.streams;
-      setRemoteStream(remoteStream);
-      
-      // Force update the video element
-      setTimeout(() => {
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remoteStream;
-          remoteVideoRef.current.play().catch(error => {
-            console.error('Error playing remote video:', error);
-          });
-        }
-      }, 100);
-    };
-
-    // Handle ICE candidates
-    peerConnection.current.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log('Sending ICE candidate:', event.candidate);
-        sendSignalingMessage('ice-candidate', {
-          candidate: event.candidate
-        });
-      }
-    };
-
-    // Handle connection state changes
-    peerConnection.current.onconnectionstatechange = () => {
-      console.log('Connection state changed:', peerConnection.current.connectionState);
-      setConnectionStatus(peerConnection.current.connectionState);
-      
-      if (peerConnection.current.connectionState === 'connected') {
-        toast({
-          title: "Connected!",
-          description: "You are now connected to the call.",
-        });
-      }
-    };
-
-    // Add ice connection state logging
-    peerConnection.current.oniceconnectionstatechange = () => {
-      const state = peerConnection.current?.iceConnectionState;
-      console.log('ICE connection state:', state);
-      if (state) {
-        setIceConnectionState(state);
-      }
-    };
-  };
-
-  const handleSignalingMessage = async (payload, messageType) => {
-    console.log('Handling signaling message:', messageType, payload);
-    try {
-      switch (messageType) {
-        case 'offer':
-          await handleOffer(payload.offer);
-          break;
-        case 'answer':
-          await handleAnswer(payload.answer);
-          break;
-        case 'ice-candidate':
-          await handleIceCandidate(payload.candidate);
-          break;
-        case 'join':
-          // Use deterministic connection initiation: user with lexicographically smaller ID initiates
-          console.log('Someone joined, current signaling state:', peerConnection.current?.signalingState);
-          if (peerConnection.current && peerConnection.current.signalingState === 'stable') {
-            const shouldInitiate = currentUser.id < payload.user?.id;
-            console.log('Should initiate connection:', shouldInitiate, 'My ID:', currentUser.id, 'Their ID:', payload.user?.id);
-            
-            if (shouldInitiate) {
-              setTimeout(() => {
-                createOffer();
-              }, 1000);
-            }
-          }
-          break;
-      }
-    } catch (error) {
-      console.error('Error handling signaling message:', error);
-    }
-  };
-
-  const createOffer = async () => {
-    if (!peerConnection.current) return;
-
-    try {
-      console.log('Creating offer...');
-      const offer = await peerConnection.current.createOffer();
-      await peerConnection.current.setLocalDescription(offer);
-      console.log('Offer created and set as local description');
-      
-      await sendSignalingMessage('offer', { offer: offer });
-    } catch (error) {
-      console.error('Error creating offer:', error);
-    }
-  };
-
-  const handleOffer = async (offer) => {
-    if (!peerConnection.current) return;
-
-    try {
-      console.log('Handling offer...');
-      await peerConnection.current.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await peerConnection.current.createAnswer();
-      await peerConnection.current.setLocalDescription(answer);
-      console.log('Answer created and set as local description');
-      
-      await sendSignalingMessage('answer', { answer: answer });
-    } catch (error) {
-      console.error('Error handling offer:', error);
-    }
-  };
-
-  const handleAnswer = async (answer) => {
-    if (!peerConnection.current) return;
-
-    try {
-      console.log('Handling answer...');
-      await peerConnection.current.setRemoteDescription(new RTCSessionDescription(answer));
-      console.log('Answer set as remote description');
-    } catch (error) {
-      console.error('Error handling answer:', error);
-    }
-  };
-
-  const handleIceCandidate = async (candidate) => {
-    if (!peerConnection.current) return;
-
-    try {
-      console.log('Adding ICE candidate:', candidate);
-      await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
-    } catch (error) {
-      console.error('Error adding ICE candidate:', error);
-    }
-  };
-
-  const toggleVideo = () => {
-    if (localStream) {
-      const videoTrack = localStream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !isVideoOn;
-        setIsVideoOn(!isVideoOn);
-      }
-    }
-  };
-
-  const toggleAudio = () => {
-    if (localStream) {
-      const audioTrack = localStream.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !isAudioOn;
-        setIsAudioOn(!isAudioOn);
-      }
-    }
-  };
-
-  const startScreenShare = async () => {
-    try {
-      if (isScreenSharing) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true
-        });
-        await replaceTrack(stream);
-        setIsScreenSharing(false);
-      } else {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: true
-        });
-        await replaceTrack(screenStream);
-        setIsScreenSharing(true);
-        
-        screenStream.getVideoTracks()[0].onended = async () => {
-          setIsScreenSharing(false);
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true
-          });
-          await replaceTrack(stream);
-        };
-      }
-    } catch (error) {
-      console.error("Error with screen sharing:", error);
-      toast({
-        title: "Screen Share Error",
-        description: "Could not start screen sharing. Please try again.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const replaceTrack = async (newStream) => {
-    if (!peerConnection.current) return;
-
-    setLocalStream(newStream);
-    
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = newStream;
-    }
-
-    // Replace video track
-    const videoSender = peerConnection.current.getSenders().find(s => 
-      s.track && s.track.kind === 'video'
-    );
-    if (videoSender) {
-      await videoSender.replaceTrack(newStream.getVideoTracks()[0]);
-    }
-
-    // Replace audio track
-    const audioSender = peerConnection.current.getSenders().find(s => 
-      s.track && s.track.kind === 'audio'
-    );
-    if (audioSender) {
-      await audioSender.replaceTrack(newStream.getAudioTracks()[0]);
-    }
-  };
-
-  const endCall = async () => {
-    // Clean up signaling messages for this room
-    await supabase
-      .from('signaling_messages')
-      .delete()
-      .eq('room_id', roomId);
-
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
-    }
-    
-    if (peerConnection.current) {
-      peerConnection.current.close();
-    }
-
-    if (pollingInterval.current) {
-      clearInterval(pollingInterval.current);
-    }
-    
-    toast({
-      title: "Call ended",
-      description: "Thanks for using Zero Barriers!",
-    });
-    
-    navigate("/dashboard");
-  };
-
-  const copyRoomId = () => {
-    navigator.clipboard.writeText(roomId || "");
-    toast({
-      title: "Room ID copied",
-      description: "Share this ID with others to invite them to the call.",
+    aslVideoRef.current.src = videoPath;
+    aslVideoRef.current.currentTime = 0;
+    aslVideoRef.current.play().catch(e => {
+      console.error('Error playing ASL video:', e);
+      setIsPlayingASL(false);
     });
   };
 
-  if (!isCallStarted) {
-    return (
-      <div className="min-h-screen bg-video-bg flex items-center justify-center">
-        <Card className="p-8 bg-video-surface border-video-control">
-          <div className="text-center text-white">
-            <Video className="h-12 w-12 mx-auto mb-4 text-primary animate-pulse" />
-            <h2 className="text-xl font-semibold mb-2">Joining call...</h2>
-            <p className="text-gray-400">Setting up your camera and microphone</p>
-          </div>
-        </Card>
-      </div>
-    );
+  const startWebcam = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+        videoRef.current.muted = true;
+        streamRef.current = stream;
+        setWebcamActive(true);
+      }
+    } catch (error) {
+      console.error("Error accessing webcam:", error);
+      alert("Could not access camera/microphone. Please check permissions.");
+    }
+  };
+
+  const stopWebcam = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setWebcamActive(false);
+  };
+
+  // Handle navigation to dashboard
+  const handleDashboard = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+    if (recognitionRef.current && recognitionActive) {
+      recognitionRef.current.stop();
+    }
+    // In a real app, this would be router navigation
+    window.history.back();
+  };
+
+  async function getUserId() {
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user) {
+    throw new Error("No logged-in user");
   }
+  return user.id;
+}
+
+  // Handle end session
+  const handleEndSession = async () => {
+    const userId = await getUserId();
+    await saveSessionValue(userId, gloss, new Date());
+    stopWebcam();
+    if (recognitionRef.current && recognitionActive) {
+      recognitionRef.current.stop();
+      setRecognitionActive(false);
+    }
+    setVideoQueue([]);
+    setCurrentVideo("");
+    if (aslVideoRef.current) aslVideoRef.current.pause();
+    setIsPlayingASL(false);
+    // In a real app, this would be router navigation
+    window.history.back();
+  };
+
+  // Handle speech recognition toggle
+  const handleTranslate = () => {
+    if (!webcamActive) {
+      alert("Please start your camera first to begin translation.");
+      return;
+    }
+
+    if (!speechSupported) {
+      alert("Speech recognition is not supported in this browser. Please try Chrome, Edge, or Safari.");
+      return;
+    }
+
+    if (!recognitionRef.current) return;
+
+    if (!recognitionActive) {
+      try {
+        recognitionRef.current.start();
+        setRecognitionActive(true);
+      } catch (error) {
+        console.error("Error starting speech recognition:", error);
+        alert("Could not start speech recognition. Please try again.");
+      }
+    } else {
+      recognitionRef.current.stop();
+      setRecognitionActive(false);
+    }
+  };
+
+  const toggleMic = () => {
+    setMicActive(!micActive);
+    if (streamRef.current) {
+      const audioTracks = streamRef.current.getAudioTracks();
+      audioTracks.forEach(track => {
+        track.enabled = !micActive;
+      });
+    }
+  };
+
+  const toggleASLVideo = () => {
+    if (!aslVideoRef.current) return;
+    
+    if (isPlayingASL) {
+      aslVideoRef.current.pause();
+      setIsPlayingASL(false);
+    } else {
+      aslVideoRef.current.play().catch(e => console.error('Error playing video:', e));
+      setIsPlayingASL(true);
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-video-bg text-white flex flex-col">
-      {/* Header */}
-      <header className="flex items-center justify-between p-4 bg-video-surface/50 backdrop-blur border-b border-video-control">
-        <div className="flex items-center space-x-4">
-          <h1 className="text-lg font-semibold">Room: {roomId}</h1>
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={copyRoomId}
-            className="text-gray-400 hover:text-white"
-          >
-            <Copy className="h-4 w-4 mr-2" />
-            Copy Room ID
-          </Button>
-          <span className={`text-xs px-2 py-1 rounded-full ${
-            connectionStatus === 'connected' ? 'bg-green-500/20 text-green-300' :
-            connectionStatus === 'connecting' ? 'bg-yellow-500/20 text-yellow-300' :
-            'bg-red-500/20 text-red-300'
-          }`}>
-            {connectionStatus}
-          </span>
-          <span className={`text-xs px-2 py-1 rounded-full ${
-            iceConnectionState === 'connected' || iceConnectionState === 'completed' ? 'bg-green-500/20 text-green-300' :
-            iceConnectionState === 'checking' || iceConnectionState === 'new' ? 'bg-yellow-500/20 text-yellow-300' :
-            'bg-red-500/20 text-red-300'
-          }`}>
-            ICE: {iceConnectionState}
-          </span>
-        </div>
-        
-        <div className="flex items-center space-x-2">
-          <Button 
-            variant="ghost" 
-            size="sm"
-            className="text-gray-400 hover:text-white"
-          >
-            <Users className="h-4 w-4 mr-2" />
-            {remoteStream ? 2 : 1}
-          </Button>
-        </div>
-      </header>
-
-      {/* Main Video Area */}
-      <main className="flex-1 relative p-4">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
-          {/* Local Video */}
-          <div className="relative bg-video-surface rounded-lg overflow-hidden">
-            <video
-              ref={localVideoRef}
-              autoPlay
-              muted
-              playsInline
-              className="w-full h-full object-cover"
-            />
-            
-            {!isVideoOn && (
-              <div className="absolute inset-0 bg-video-control flex items-center justify-center">
-                <div className="text-center">
-                  <VideoOff className="h-12 w-12 mx-auto mb-2 text-gray-400" />
-                  <p className="text-gray-400">Camera is off</p>
-                </div>
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-100">
+      {/* Navigation */}
+      <nav className="px-6 py-4 border-b border-purple-200/50 bg-white/80 backdrop-blur-sm">
+        <div className="container mx-auto flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="text-purple-600 hover:text-purple-800 hover:bg-purple-50"
+              onClick={handleDashboard}
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Dashboard
+            </Button>
+            <div className="h-6 w-px bg-purple-300" />
+            <div className="flex items-center space-x-2">
+              <Video className="h-6 w-6 text-purple-600" />
+              <span className="text-xl font-bold text-gray-900">Video-Based ASL Translation</span>
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <div className={`px-3 py-1 rounded-full text-sm font-medium ${
+              webcamActive ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-600'
+            }`}>
+              {webcamActive ? 'LIVE SESSION' : 'STANDBY'}
+            </div>
+            {!speechSupported && (
+              <div className="px-3 py-1 rounded-full text-sm font-medium bg-red-100 text-red-800">
+                SPEECH NOT SUPPORTED
               </div>
             )}
-            
-            <div className="absolute bottom-4 left-4 bg-black/50 px-3 py-1 rounded-full">
-              <span className="text-sm">{currentUser?.name || 'You'} {isScreenSharing && "(sharing)"}</span>
+          </div>
+        </div>
+      </nav>
+
+      {/* Main Content */}
+      <main className="container mx-auto px-6 py-8">
+        <div className="grid lg:grid-cols-2 gap-8 mb-8">
+          {/* User Video Panel */}
+          <Card className="p-6 bg-white/80 backdrop-blur-sm border-0 shadow-lg">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Video className="w-5 h-5 text-purple-600" />
+                <h2 className="text-xl font-semibold text-gray-900">Your Video</h2>
+              </div>
+              <div className="flex gap-2">
+                {webcamActive && (
+                  <Button
+                    onClick={toggleMic}
+                    size="sm"
+                    variant={micActive ? "outline" : "destructive"}
+                    className="h-8"
+                  >
+                    {micActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+                  </Button>
+                )}
+              </div>
             </div>
             
-            <div className="absolute bottom-4 right-4 flex space-x-2">
-              {!isAudioOn && (
-                <div className="w-8 h-8 bg-red-500 rounded-full flex items-center justify-center">
-                  <MicOff className="h-4 w-4" />
+            <div className={`relative rounded-lg overflow-hidden border-2 transition-all duration-300 ${
+              recognitionActive ? "border-purple-500 shadow-lg shadow-purple-200" : "border-gray-200"
+            }`}>
+              <video 
+                ref={videoRef} 
+                className="w-full h-80 object-cover bg-gray-100"
+                style={{ filter: webcamActive ? 'none' : 'blur(10px)' }}
+              />
+              
+              {!webcamActive && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-100/80">
+                  <div className="text-center">
+                    <VideoOff className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-600 text-lg">Camera not active</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Status indicators */}
+              <div className="absolute top-3 left-3 flex gap-2">
+                {webcamActive && (
+                  <div className="px-2 py-1 rounded text-xs font-medium bg-red-500 text-white">
+                    LIVE
+                  </div>
+                )}
+                {recognitionActive && (
+                  <div className="px-2 py-1 rounded text-xs font-medium bg-purple-500 text-white animate-pulse">
+                    LISTENING
+                  </div>
+                )}
+              </div>
+
+              {/* Audio level indicator */}
+              {webcamActive && micActive && (
+                <div className="absolute bottom-3 left-3 flex items-center gap-2">
+                  <Mic className="w-4 h-4 text-purple-600" />
+                  <div className="flex gap-1">
+                    {[...Array(4)].map((_, i) => (
+                      <div
+                        key={i}
+                        className={`w-1 bg-purple-500 rounded-full transition-all duration-200 ${
+                          recognitionActive ? 'h-4 opacity-100' : 'h-1 opacity-40'
+                        }`}
+                        style={{ animationDelay: `${i * 100}ms` }}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
-          </div>
+          </Card>
 
-          {/* Remote Video or Placeholder */}
-          <div className="relative bg-video-surface rounded-lg overflow-hidden">
-            {remoteStream ? (
-              <>
-                <video
-                  ref={remoteVideoRef}
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute bottom-4 left-4 bg-black/50 px-3 py-1 rounded-full">
-                  <span className="text-sm">Remote User</span>
-                </div>
-              </>
-            ) : (
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center text-gray-400">
-                  <Users className="h-16 w-16 mx-auto mb-4 opacity-50" />
-                  <h3 className="text-xl font-semibold mb-2">Waiting for others</h3>
-                  <p>Share the room ID to invite participants</p>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={copyRoomId}
-                    className="mt-4 border-gray-600 text-gray-400 hover:text-white hover:border-gray-400"
+          {/* ASL Video Panel */}
+          <Card className="p-6 bg-white/80 backdrop-blur-sm border-0 shadow-lg">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Volume2 className="w-5 h-5 text-purple-600" />
+                <h2 className="text-xl font-semibold text-gray-900">ASL Video Translation</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                {currentVideo && (
+                  <Button
+                    onClick={toggleASLVideo}
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
                   >
-                    <UserPlus className="h-4 w-4 mr-2" />
-                    Invite Others
+                    {isPlayingASL ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                  </Button>
+                )}
+                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <Activity className="w-4 h-4" />
+                  {speechSupported ? 'Ready' : 'Speech Not Supported'}
+                </div>
+              </div>
+            </div>
+            
+            <div className="relative rounded-lg overflow-hidden border-2 border-gray-200">
+              <video 
+                ref={aslVideoRef}
+                className="w-full h-80 object-cover bg-gray-900"
+                loop={false}
+                muted
+                playsInline
+              />
+              
+              {!currentVideo && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-900/90">
+                  <div className="text-center">
+                    <Volume2 className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                    <p className="text-white text-lg">Ready for ASL Translation</p>
+                    <p className="text-gray-400 text-sm mt-2">
+                      {speechSupported ? "Start speaking to see sign language videos" : "Speech recognition not supported in this browser"}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Video queue indicator */}
+              {videoQueue.length > 1 && (
+                <div className="absolute top-3 right-3 bg-purple-500 text-white px-2 py-1 rounded text-xs font-medium">
+                  Queue: {videoQueue.length} videos
+                </div>
+              )}
+
+              {/* Current word indicator */}
+              {currentVideo && (
+                <div className="absolute bottom-3 left-3 bg-black/50 text-white px-3 py-1 rounded text-sm font-medium">
+                  {currentVideo.toUpperCase()}
+                </div>
+              )}
+              
+            </div>
+
+            {/* Video Controls */}
+            {currentVideo && (
+              <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-gray-600">
+                    Playing: <span className="font-medium">{currentVideo}</span>
+                    {videoQueue.length > 1 && (
+                      <span className="ml-2 text-purple-600">
+                        ({videoQueue.length - 1} more in queue)
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    onClick={() => {
+                      setVideoQueue([]);
+                      setCurrentVideo("");
+                      if (aslVideoRef.current) {
+                        aslVideoRef.current.pause();
+                      }
+                      setIsPlayingASL(false);
+                    }}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Clear
                   </Button>
                 </div>
               </div>
             )}
+          </Card>
+        </div>
+
+        {/* Status Message */}
+        {recognitionActive && (
+          <div className="text-center mb-8">
+            <Card className="inline-block p-4 bg-purple-50 border-purple-200">
+              <div className="flex items-center gap-3 text-purple-600">
+                <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse" />
+                <span className="font-medium">
+                  Listening for speech... Speak clearly into your microphone
+                </span>
+              </div>
+            </Card>
           </div>
+        )}
+
+        {/* Control Panel */}
+        <div className="flex flex-wrap gap-4 justify-center">
+          {!webcamActive ? (
+            <Button 
+              onClick={startWebcam} 
+              size="lg"
+              className="bg-purple-600 hover:bg-purple-700 text-white shadow-lg hover:shadow-xl transition-all duration-200"
+            >
+              <Video className="w-5 h-5 mr-2" />
+              Start Camera
+            </Button>
+          ) : (
+            <Button 
+              onClick={stopWebcam} 
+              size="lg"
+              variant="outline"
+              className="border-purple-200 text-purple-700 hover:bg-purple-50"
+            >
+              <VideoOff className="w-5 h-5 mr-2" />
+              Stop Camera
+            </Button>
+          )}
+          
+          <Button 
+            onClick={handleTranslate} 
+            size="lg"
+            className={`shadow-lg hover:shadow-xl transition-all duration-200 ${
+              recognitionActive 
+                ? "bg-red-600 hover:bg-red-700" 
+                : "bg-indigo-600 hover:bg-indigo-700"
+            } text-white`}
+            disabled={!webcamActive || !speechSupported}
+          >
+            <Volume2 className="w-5 h-5 mr-2" />
+            {recognitionActive ? 'Stop Listening' : 'Start Listening'}
+          </Button>
+
+          <Button 
+            size="lg"
+            variant="outline"
+            className="border-purple-200 text-purple-700 hover:bg-purple-50"
+            onClick={handleEndSession}
+          >
+            <ArrowLeft className="w-5 h-5 mr-2" />
+            End Session
+          </Button>
+        </div>
+
+        {/* Footer */}
+        <div className="text-center mt-8">
+          <p className="text-gray-600 text-sm">
+            Real-time speech-to-ASL translation using curated video content
+          </p>
+          {!speechSupported && (
+            <p className="text-red-600 text-sm mt-2">
+              Speech recognition requires Chrome, Edge, or Safari browser
+            </p>
+          )}
         </div>
       </main>
-
-      <TranslationService
-    localStream={localStream}
-    remoteStream={remoteStream}
-    className={clsx(
-      "absolute bottom-24 left-1/2 transform -translate-x-1/2",
-      "flex flex-col gap-2 items-center",
-      "bg-black/30 backdrop-blur-sm rounded-lg p-3",
-      "[&>*]:pointer-events-auto",
-      "pointer-events-none"
-    )}
-  />
-
-      {/* Controls */}
-      <footer className="p-6 bg-video-surface/80 backdrop-blur border-t border-video-control">
-        <div className="flex items-center justify-center space-x-4">
-          <Button
-            variant="ghost"
-            size="lg"
-            onClick={toggleAudio}
-            className={`w-12 h-12 rounded-full ${
-              isAudioOn 
-                ? "bg-video-control hover:bg-video-control-hover text-white" 
-                : "bg-red-500 hover:bg-red-600 text-white"
-            }`}
-          >
-            {isAudioOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-          </Button>
-          
-          <Button
-            variant="ghost"
-            size="lg"
-            onClick={toggleVideo}
-            className={`w-12 h-12 rounded-full ${
-              isVideoOn 
-                ? "bg-video-control hover:bg-video-control-hover text-white" 
-                : "bg-red-500 hover:bg-red-600 text-white"
-            }`}
-          >
-            {isVideoOn ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
-          </Button>
-          
-          <Button
-            variant="ghost"
-            size="lg"
-            onClick={startScreenShare}
-            className={`w-12 h-12 rounded-full ${
-              isScreenSharing 
-                ? "bg-blue-500 hover:bg-blue-600 text-white" 
-                : "bg-video-control hover:bg-video-control-hover text-white"
-            }`}
-          >
-            <MonitorSpeaker className="h-5 w-5" />
-          </Button>
-          
-          <Button
-            variant="destructive"
-            size="lg"
-            onClick={endCall}
-            className="w-12 h-12 rounded-full bg-red-500 hover:bg-red-600 text-white ml-8"
-          >
-            <Phone className="h-5 w-5" />
-          </Button>
-          
-        </div>
-      </footer>
     </div>
   );
 };

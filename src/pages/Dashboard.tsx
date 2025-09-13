@@ -1,49 +1,40 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Video, Plus, Users, Clock, Phone, LogOut, Camera, Settings } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { Video, Plus, Users, Clock, LogOut, Camera } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabaseClient";
 
 const Dashboard = () => {
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
+  const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [roomId, setRoomId] = useState("");
+  const [recentSessions, setRecentSessions] = useState<any[]>([]);
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  // 1️⃣ Get user & profile
   useEffect(() => {
-    // Check current authentication state and fetch profile
     const checkUser = async () => {
       try {
         const { data: { user }, error } = await supabase.auth.getUser();
-        
         if (error || !user) {
-          console.log('No authenticated user, redirecting to signin');
           navigate("/signin");
           return;
         }
 
         setUser(user);
 
-        // Fetch user profile data
         const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
           .single();
 
-        if (profileError) {
-          console.error('Error fetching profile:', profileError);
-          // Continue with just auth user data if profile fetch fails
-        } else {
-          setProfile(profileData);
-        }
+        if (!profileError) setProfile(profileData);
       } catch (error) {
-        console.error('Error checking user:', error);
+        console.error("Error checking user:", error);
         navigate("/signin");
       } finally {
         setLoading(false);
@@ -52,225 +43,167 @@ const Dashboard = () => {
 
     checkUser();
 
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_OUT' || !session) {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || !session) {
         setUser(null);
         setProfile(null);
         navigate("/signin");
       } else if (session?.user) {
         setUser(session.user);
-        
-        // Fetch profile when user signs in
-        const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', session.user.id)
-          .single();
-
-        if (!profileError) {
-          setProfile(profileData);
-        }
-        
+        supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", session.user.id)
+          .single()
+          .then(({ data }) => data && setProfile(data));
         setLoading(false);
       }
     });
 
-    // Cleanup subscription
     return () => subscription.unsubscribe();
   }, [navigate]);
+
+  // 2️⃣ Fetch recent sessions AFTER user is available
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchSessions = async () => {
+      const { data, error } = await supabase
+        .from("user_sessions")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("ts", { ascending: false })
+        .limit(5);
+
+      if (!error && data) {
+        setRecentSessions(data);
+      }
+    };
+
+    fetchSessions();
+  }, [user]);
 
   const handleLogout = async () => {
     try {
       const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.error('Error signing out:', error);
-        toast({
-          title: "Error",
-          description: "Failed to sign out. Please try again.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      toast({
-        title: "Signed out successfully",
-        description: "Come back soon!",
-      });
+      if (error) throw error;
+      toast({ title: "Signed out", description: "See you soon!" });
       navigate("/");
-    } catch (error) {
-      console.error('Unexpected error during signout:', error);
-      toast({
-        title: "Error",
-        description: "An unexpected error occurred.",
-        variant: "destructive",
-      });
+    } catch {
+      toast({ title: "Error", description: "Could not sign out.", variant: "destructive" });
     }
   };
 
-  const handleCreateRoom = () => {
-    const newRoomId = Math.random().toString(36).substr(2, 9);
-    navigate(`/call/${newRoomId}`);
+  const handleStartSession = () => {
+    const sessionId = Math.random().toString(36).substr(2, 9);
+    navigate(`/session/${sessionId}`);
   };
 
-  const handleJoinRoom = () => {
-    if (!roomId.trim()) {
-      toast({
-        title: "Room ID required",
-        description: "Please enter a valid room ID to join.",
-        variant: "destructive",
-      });
-      return;
-    }
-    navigate(`/call/${roomId}`);
-  };
-
-  // Show loading state while checking authentication
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <Video className="h-12 w-12 mx-auto mb-4 animate-spin text-primary" />
-          <p className="text-lg">Loading...</p>
-        </div>
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Video className="h-12 w-12 animate-spin text-primary" />
+        <p className="mt-4 text-lg">Loading your dashboard...</p>
       </div>
     );
   }
 
-  // This shouldn't render if user is null (they'd be redirected)
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
-  // Get user display name from profile or fallback to email
-  const displayName = profile?.full_name || 
-                     user.user_metadata?.name || 
-                     user.user_metadata?.full_name || 
-                     user.email?.split('@')[0] || 
-                     'User';
-
-  const displayEmail = user.email;
+  const displayName =
+    profile?.full_name ||
+    user.user_metadata?.name ||
+    user.email?.split("@")[0] ||
+    "User";
 
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b bg-card/50 backdrop-blur">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Video className="h-8 w-8 text-primary" />
-              <span className="text-2xl font-bold">Zero Barriers</span>
+        <div className="container mx-auto px-6 py-4 flex justify-between items-center">
+          <div className="flex items-center space-x-2">
+            <Video className="h-8 w-8 text-primary" />
+            <span className="text-2xl font-bold">Zero Barriers</span>
+          </div>
+          <div className="flex items-center space-x-4">
+            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+              <span className="text-sm font-medium text-primary">
+                {displayName.charAt(0).toUpperCase()}
+              </span>
             </div>
-            
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
-                  <span className="text-sm font-medium text-primary">
-                    {displayName.charAt(0).toUpperCase()}
-                  </span>
-                </div>
-                <span className="text-sm text-muted-foreground">{displayName}</span>
-                {profile?.hearing_status && (
-                  <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full">
-                    {profile.hearing_status === 'deaf' ? 'Deaf/HoH' : 'Hearing'}
-                  </span>
-                )}
-              </div>
-              
-              <Button variant="ghost" size="sm" onClick={handleLogout}>
-                <LogOut className="h-4 w-4 mr-2" />
-                Sign Out
-              </Button>
-            </div>
+            <span className="text-sm text-muted-foreground">{displayName}</span>
+            <Button variant="ghost" size="sm" onClick={handleLogout}>
+              <LogOut className="h-4 w-4 mr-2" />
+              Logout
+            </Button>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main */}
       <main className="container mx-auto px-6 py-12">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-12">
-            <h1 className="text-4xl font-bold mb-4">Welcome back, {displayName}!</h1>
-            <p className="text-lg text-muted-foreground">
-              Start a new meeting or join an existing one
-            </p>
-          </div>
+        <div className="max-w-4xl mx-auto text-center mb-12">
+          <h1 className="text-4xl font-bold mb-4">Welcome, {displayName}!</h1>
+          <p className="text-lg text-muted-foreground">
+            Start a new session to speak, and your words will be translated to sign language in real-time.
+          </p>
+        </div>
 
-          {/* Quick Actions */}
-          <div className="grid md:grid-cols-2 gap-8 mb-12">
-            <Card className="p-8 bg-gradient-surface border-0 shadow-medium hover:shadow-large transition-all">
-              <CardHeader className="text-center pb-4">
-                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Plus className="h-8 w-8 text-primary" />
-                </div>
-                <CardTitle className="text-xl">Start New Meeting</CardTitle>
-                <CardDescription>
-                  Create a new video call room instantly
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <Button 
-                  onClick={handleCreateRoom}
-                  className="w-full" 
-                  variant="hero"
-                  size="lg"
-                >
-                  <Camera className="h-5 w-5 mr-2" />
-                  Start Meeting
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card className="p-8 bg-gradient-surface border-0 shadow-medium hover:shadow-large transition-all">
-              <CardHeader className="text-center pb-4">
-                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Phone className="h-8 w-8 text-primary" />
-                </div>
-                <CardTitle className="text-xl">Join Meeting</CardTitle>
-                <CardDescription>
-                  Enter a room ID to join an existing call
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="pt-0 space-y-4">
-                <Input
-                  placeholder="Enter room ID"
-                  value={roomId}
-                  onChange={(e) => setRoomId(e.target.value)}
-                  onKeyPress={(e) => e.key === "Enter" && handleJoinRoom()}
-                />
-                <Button 
-                  onClick={handleJoinRoom}
-                  className="w-full" 
-                  variant="outline"
-                  size="lg"
-                >
-                  <Users className="h-5 w-5 mr-2" />
-                  Join Meeting
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Recent Meetings */}
-          <Card className="shadow-medium">
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Clock className="h-5 w-5 mr-2" />
-                Recent Meetings
-              </CardTitle>
+        {/* Actions */}
+        <div className="flex justify-center mb-12">
+          <Card className="p-8 bg-gradient-surface border-0 shadow-medium hover:shadow-large transition-all w-full max-w-2xl">
+            <CardHeader className="text-center pb-4">
+              <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Plus className="h-8 w-8 text-primary" />
+              </div>
+              <CardTitle className="text-xl">Start New Session</CardTitle>
               <CardDescription>
-                Your recently joined video calls
+                Speak freely and see your video transform into a sign language avatar
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="text-center py-8 text-muted-foreground">
-                <Video className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>No recent meetings</p>
-                <p className="text-sm">Your meeting history will appear here</p>
-              </div>
+            <CardContent className="pt-0">
+              <Button onClick={handleStartSession} className="w-full" variant="hero" size="lg">
+                <Camera className="h-5 w-5 mr-2" />
+                Start Session
+              </Button>
             </CardContent>
           </Card>
         </div>
+
+        {/* Recent Sessions */}
+        <Card className="shadow-medium">
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <Clock className="h-5 w-5 mr-2" />
+              Recent Sessions
+            </CardTitle>
+            <CardDescription>Your recently used sign language sessions</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {recentSessions.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Video className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No recent sessions</p>
+                <p className="text-sm">Your session history will appear here</p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-muted">
+                {recentSessions.map((session) => (
+                  <li
+                    key={session.id}
+                    onClick={() => navigate(`/chat/${session.id}`)}
+                    className="cursor-pointer p-4 hover:bg-muted/50 transition rounded-md flex justify-between items-center"
+                  >
+                    <span className="font-medium">
+                      {new Date(session.ts).toLocaleString()}
+                    </span>
+                    <span className="text-primary text-sm underline">View Session →</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
       </main>
     </div>
   );
