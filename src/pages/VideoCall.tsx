@@ -252,7 +252,7 @@ const VideoCall = () => {
       if (event.candidate) {
         console.log('Sending ICE candidate:', event.candidate);
         sendSignalingMessage('ice-candidate', {
-          candidate: event.candidate
+          candidate: event.candidate.toJSON()
         });
       }
     };
