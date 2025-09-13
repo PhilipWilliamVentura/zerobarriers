@@ -128,13 +128,24 @@ const VideoCall = () => {
   };
 
   // Fix: Handle remote stream properly
+
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
-      // Force play the remote video
-      remoteVideoRef.current.play().catch(error => {
-        console.error('Error playing remote video:', error);
-      });
+      // Try to load and play the remote video reliably
+      const video = remoteVideoRef.current;
+      const tryPlay = () => {
+        if (video.readyState >= 2) {
+          video.play().catch(error => {
+            console.error('Error playing remote video:', error);
+            // Optionally, show a toast or UI message here
+          });
+        } else {
+          video.load();
+          setTimeout(tryPlay, 100);
+        }
+      };
+      tryPlay();
     }
   }, [remoteStream]);
 
