@@ -16,7 +16,6 @@ const SignUp = () => {
     password: "",
     confirmPassword: "",
     fullName: "",
-    hearingStatus: "hearing" // "deaf" or "hearing"
   });
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
@@ -77,7 +76,6 @@ const SignUp = () => {
             {
               id: data.user.id,
               full_name: formData.fullName.trim(),
-              hearing_status: formData.hearingStatus,
               email: formData.email,
               created_at: new Date().toISOString(),
             }
@@ -154,24 +152,6 @@ const SignUp = () => {
                   onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
                   required
                 />
-              </div>
-
-              <div className="space-y-3">
-                <Label>I am</Label>
-                <RadioGroup
-                  value={formData.hearingStatus}
-                  onValueChange={(value) => setFormData({ ...formData, hearingStatus: value })}
-                  className="flex flex-col space-y-2"
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="deaf" id="deaf" />
-                    <Label htmlFor="deaf" className="cursor-pointer">Deaf or Hard of Hearing</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="hearing" id="hearing" />
-                    <Label htmlFor="hearing" className="cursor-pointer">Hearing</Label>
-                  </div>
-                </RadioGroup>
               </div>
 
               <div className="space-y-2">
