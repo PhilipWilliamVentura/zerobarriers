@@ -1,11 +1,5 @@
 # Zero Barriers – Real-Time ASL Video Translator
 
-[![Hackathon Project](https://img.shields.io/badge/Hackathon-Finalist-brightgreen)](#)  
-[![Vite](https://img.shields.io/badge/Built%20with-Vite-blue)](#)  
-[![Supabase](https://img.shields.io/badge/Auth-Supabase-orange)](#)  
-
----
-
 ## 🚀 Overview
 
 **Zero Barriers** is a full-stack web app that empowers real-time communication using **American Sign Language (ASL)**. Speak naturally into your webcam, and watch your avatar translate your speech into ASL live!
