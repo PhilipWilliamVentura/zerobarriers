@@ -59,7 +59,7 @@ const VideoCall = () => {
   const [speechSupported, setSpeechSupported] = useState(false);
 
   // Transcript
-  let gloss: string = "";
+  const [gloss, setGloss] = useState("");
 
   async function saveSessionValue(userId: string, value: string, ts = new Date()) {
   const { data, error } = await supabase
@@ -220,7 +220,7 @@ const VideoCall = () => {
   const playASLVideo = (videoKey: string) => {
     if (!aslVideoRef.current) return;
     
-    gloss += videoKey
+    setGloss(prev => (prev ? `${prev} ${videoKey}` : videoKey));
 
     const videoPath = aslVideoLibrary[videoKey as keyof typeof aslVideoLibrary] || aslVideoLibrary.waiting;
     setCurrentVideo(videoKey);
