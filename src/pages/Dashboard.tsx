@@ -7,12 +7,14 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabaseClient";
 
 const Dashboard = () => {
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
+  const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [recentSessions, setRecentSessions] = useState<any[]>([]);
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  // 1️⃣ Get user & profile
   useEffect(() => {
     const checkUser = async () => {
       try {
@@ -25,14 +27,14 @@ const Dashboard = () => {
         setUser(user);
 
         const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
           .single();
 
         if (!profileError) setProfile(profileData);
       } catch (error) {
-        console.error('Error checking user:', error);
+        console.error("Error checking user:", error);
         navigate("/signin");
       } finally {
         setLoading(false);
@@ -42,16 +44,16 @@ const Dashboard = () => {
     checkUser();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT' || !session) {
+      if (event === "SIGNED_OUT" || !session) {
         setUser(null);
         setProfile(null);
         navigate("/signin");
       } else if (session?.user) {
         setUser(session.user);
         supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', session.user.id)
+          .from("profiles")
+          .select("*")
+          .eq("id", session.user.id)
           .single()
           .then(({ data }) => data && setProfile(data));
         setLoading(false);
@@ -60,6 +62,26 @@ const Dashboard = () => {
 
     return () => subscription.unsubscribe();
   }, [navigate]);
+
+  // 2️⃣ Fetch recent sessions AFTER user is available
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchSessions = async () => {
+      const { data, error } = await supabase
+        .from("user_sessions")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("ts", { ascending: false })
+        .limit(5);
+
+      if (!error && data) {
+        setRecentSessions(data);
+      }
+    };
+
+    fetchSessions();
+  }, [user]);
 
   const handleLogout = async () => {
     try {
@@ -88,7 +110,11 @@ const Dashboard = () => {
 
   if (!user) return null;
 
-  const displayName = profile?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User';
+  const displayName =
+    profile?.full_name ||
+    user.user_metadata?.name ||
+    user.email?.split("@")[0] ||
+    "User";
 
   return (
     <div className="min-h-screen bg-background">
@@ -101,7 +127,9 @@ const Dashboard = () => {
           </div>
           <div className="flex items-center space-x-4">
             <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-              <span className="text-sm font-medium text-primary">{displayName.charAt(0).toUpperCase()}</span>
+              <span className="text-sm font-medium text-primary">
+                {displayName.charAt(0).toUpperCase()}
+              </span>
             </div>
             <span className="text-sm text-muted-foreground">{displayName}</span>
             <Button variant="ghost" size="sm" onClick={handleLogout}>
@@ -123,25 +151,24 @@ const Dashboard = () => {
 
         {/* Actions */}
         <div className="flex justify-center mb-12">
-        <Card className="p-8 bg-gradient-surface border-0 shadow-medium hover:shadow-large transition-all w-full max-w-2xl">
-          <CardHeader className="text-center pb-4">
-            <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Plus className="h-8 w-8 text-primary" />
-            </div>
-            <CardTitle className="text-xl">Start New Session</CardTitle>
-            <CardDescription>
-              Speak freely and see your video transform into a sign language avatar
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <Button onClick={handleStartSession} className="w-full" variant="hero" size="lg">
-              <Camera className="h-5 w-5 mr-2" />
-              Start Session
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-
+          <Card className="p-8 bg-gradient-surface border-0 shadow-medium hover:shadow-large transition-all w-full max-w-2xl">
+            <CardHeader className="text-center pb-4">
+              <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Plus className="h-8 w-8 text-primary" />
+              </div>
+              <CardTitle className="text-xl">Start New Session</CardTitle>
+              <CardDescription>
+                Speak freely and see your video transform into a sign language avatar
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <Button onClick={handleStartSession} className="w-full" variant="hero" size="lg">
+                <Camera className="h-5 w-5 mr-2" />
+                Start Session
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Recent Sessions */}
         <Card className="shadow-medium">
@@ -150,16 +177,31 @@ const Dashboard = () => {
               <Clock className="h-5 w-5 mr-2" />
               Recent Sessions
             </CardTitle>
-            <CardDescription>
-              Your recently used sign language sessions
-            </CardDescription>
+            <CardDescription>Your recently used sign language sessions</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="text-center py-8 text-muted-foreground">
-              <Video className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No recent sessions</p>
-              <p className="text-sm">Your session history will appear here</p>
-            </div>
+            {recentSessions.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Video className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No recent sessions</p>
+                <p className="text-sm">Your session history will appear here</p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-muted">
+                {recentSessions.map((session) => (
+                  <li
+                    key={session.id}
+                    onClick={() => navigate(`/chat/${session.id}`)}
+                    className="cursor-pointer p-4 hover:bg-muted/50 transition rounded-md flex justify-between items-center"
+                  >
+                    <span className="font-medium">
+                      {new Date(session.ts).toLocaleString()}
+                    </span>
+                    <span className="text-primary text-sm underline">View Session →</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
       </main>
