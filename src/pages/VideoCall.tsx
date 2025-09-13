@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { TranslationService } from '@/components/translation';
+import clsx from "clsx";
 import { 
   Video, 
   VideoOff, 
@@ -595,6 +597,18 @@ const VideoCall = () => {
         </div>
       </main>
 
+      <TranslationService
+    localStream={localStream}
+    remoteStream={remoteStream}
+    className={clsx(
+      "absolute bottom-24 left-1/2 transform -translate-x-1/2",
+      "flex flex-col gap-2 items-center",
+      "bg-black/30 backdrop-blur-sm rounded-lg p-3",
+      "[&>*]:pointer-events-auto",
+      "pointer-events-none"
+    )}
+  />
+
       {/* Controls */}
       <footer className="p-6 bg-video-surface/80 backdrop-blur border-t border-video-control">
         <div className="flex items-center justify-center space-x-4">
@@ -645,6 +659,7 @@ const VideoCall = () => {
           >
             <Phone className="h-5 w-5" />
           </Button>
+          
         </div>
       </footer>
     </div>
