@@ -281,41 +281,61 @@ const VideoCall = () => {
   };
 
   const handleSignalingMessage = async (payload: any, messageType: string): Promise<void> => {
-    console.log('Handling signaling message:', messageType, payload);
-    try {
-      // Ensure peer connection is initialized before handling signaling
-      if (!peerConnection.current && localStream) {
-        await initializePeerConnection(localStream);
-      }
-      switch (messageType) {
-        case 'offer':
-          await handleOffer(payload.offer);
-          break;
-        case 'answer':
-          await handleAnswer(payload.answer);
-          break;
-        case 'ice-candidate':
-          await handleIceCandidate(payload.candidate);
-          break;
-        case 'join':
-          // Use deterministic connection initiation: user with lexicographically smaller ID initiates
-          console.log('Someone joined, current signaling state:', peerConnection.current?.signalingState);
-          if (peerConnection.current && peerConnection.current.signalingState === 'stable') {
-            const shouldInitiate = currentUser.id < payload.user?.id;
-            console.log('Should initiate connection:', shouldInitiate, 'My ID:', currentUser.id, 'Their ID:', payload.user?.id);
-            // Only create offer if not already in have-local-offer state
-            if (shouldInitiate && peerConnection.current.signalingState === 'stable') {
-              setTimeout(() => {
-                createOffer();
-              }, 1000);
-            }
-          }
-          break;
-      }
-    } catch (error) {
-      console.error('Error handling signaling message:', error);
+  console.log('Handling signaling message:', messageType, payload);
+
+  try {
+    // Ensure peer connection is initialized
+    if (!peerConnection.current && localStream) {
+      await initializePeerConnection(localStream);
     }
-  };
+
+    switch (messageType) {
+      case 'offer':
+        await handleOffer(payload.offer);
+        break;
+
+      case 'answer':
+        await handleAnswer(payload.answer);
+        break;
+
+      case 'ice-candidate':
+        await handleIceCandidate(payload.candidate);
+        break;
+
+      case 'join':
+        console.log('Someone joined, current signaling state:', peerConnection.current?.signalingState);
+
+        if (!peerConnection.current) return;
+
+        // Only create an offer if we haven't already sent one
+        // and signaling state is stable (no local offer in progress)
+        const signalingState = peerConnection.current.signalingState;
+        if (signalingState !== 'stable') break;
+
+        // Use deterministic logic for first peer, fallback timer for safety
+        const shouldInitiate = currentUser.id < payload.user?.id;
+        console.log('Should initiate connection:', shouldInitiate, 'My ID:', currentUser.id, 'Their ID:', payload.user?.id);
+
+        if (shouldInitiate) {
+          // Delay slightly to allow ICE gathering
+          setTimeout(() => {
+            createOffer();
+          }, 500);
+        } else {
+          // Fallback: if no offer arrives in 2 seconds, force creation
+          setTimeout(() => {
+            if (peerConnection.current && peerConnection.current.signalingState === 'stable') {
+              console.log('Fallback: creating offer to prevent deadlock');
+              createOffer();
+            }
+          }, 2000);
+        }
+        break;
+    }
+  } catch (error) {
+    console.error('Error handling signaling message:', error);
+  }
+};
 
   const createOffer = async (): Promise<void> => {
     if (!peerConnection.current) return;
