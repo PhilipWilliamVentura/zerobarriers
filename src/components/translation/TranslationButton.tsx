@@ -20,14 +20,14 @@ export const TranslationButton = ({
 }: TranslationButtonProps) => {
   const getButtonText = () => {
     if (!isActive) {
-      return hearingStatus === 'deaf' ? 'Enable ASL Translation' : 'Enable Live Captions';
+      return hearingStatus === 'deaf' ? 'Enable Live Captions' : 'Enable ASL Translation';
     }
     
     if (!isConnected) {
       return 'Connecting...';
     }
     
-    return hearingStatus === 'deaf' ? 'ASL Translation On' : 'Live Captions On';
+    return hearingStatus === 'deaf' ? 'Translation On' : 'Live Captions On';
   };
 
   const getIcon = () => {
