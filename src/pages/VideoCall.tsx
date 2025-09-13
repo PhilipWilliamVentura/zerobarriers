@@ -54,10 +54,9 @@ const VideoCall = () => {
   // WebRTC configuration
   const rtcConfiguration = {
     iceServers: [
-      { urls: 'stun.12connect.com:3478' },
-      { urls: 'stun.1und1.de:3478' },
-      { urls: 'stun.bluesip.net:3478' },
-      { urls: 'stun.comtube.com:3478' },
+      { urls: 'stun:stun.1und1.de:3478' },
+    { urls: 'stun:stun.bluesip.net:3478' },
+    { urls: 'stun:stun.comtube.com:3478' },
         // Public TURN server for testing (do not use for production)
         { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
     ]
