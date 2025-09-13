@@ -114,18 +114,20 @@ const VideoCall = () => {
       const { data: messages, error } = await query;
       
       if (error) {
-        console.error('Error polling messages:', error);
+        console.error('[SIGNALING] Error polling messages:', error);
         return;
       }
 
       if (messages && messages.length > 0) {
+        console.log('[SIGNALING] Received messages:', messages);
         for (const message of messages) {
+          console.log(`[SIGNALING] Handling message:`, message.message_type, message.payload);
           await handleSignalingMessage(message.payload, message.message_type);
           lastMessageId.current = message.id;
         }
       }
     } catch (error) {
-      console.error('Error in polling:', error);
+      console.error('[SIGNALING] Error in polling:', error);
     }
   };
 
@@ -161,6 +163,7 @@ const VideoCall = () => {
 
   const sendSignalingMessage = async (messageType: string, payload: any): Promise<void> => {
     try {
+      console.log(`[SIGNALING] Sending message:`, messageType, payload);
       const { error } = await supabase
         .from('signaling_messages')
         .insert([
@@ -173,10 +176,10 @@ const VideoCall = () => {
         ]);
 
       if (error) {
-        console.error('Error sending signaling message:', error);
+        console.error('[SIGNALING] Error sending signaling message:', error);
       }
     } catch (error) {
-      console.error('Error in sendSignalingMessage:', error);
+      console.error('[SIGNALING] Error in sendSignalingMessage:', error);
     }
   };
 
@@ -244,7 +247,7 @@ const VideoCall = () => {
 
     // Fix: Handle remote stream properly
     peerConnection.current.ontrack = (event) => {
-      console.log('Remote track received:', event);
+      console.log('[PEER] Remote track received:', event);
       const [stream] = event.streams;
       setRemoteStream(stream); // this will trigger your useEffect to handle video.play()
     };
@@ -252,16 +255,18 @@ const VideoCall = () => {
     // Handle ICE candidates
     peerConnection.current.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log('Sending ICE candidate:', event.candidate);
+        console.log('[ICE] Sending ICE candidate:', event.candidate);
         sendSignalingMessage('ice-candidate', {
           candidate: event.candidate.toJSON()
         });
+      } else {
+        console.log('[ICE] All ICE candidates have been sent');
       }
     };
 
     // Handle connection state changes
     peerConnection.current.onconnectionstatechange = () => {
-      console.log('Connection state changed:', peerConnection.current.connectionState);
+      console.log('[PEER] Connection state changed:', peerConnection.current.connectionState);
       setConnectionStatus(peerConnection.current.connectionState);
       
       if (peerConnection.current.connectionState === 'connected') {
@@ -275,7 +280,7 @@ const VideoCall = () => {
     // Add ice connection state logging
     peerConnection.current.oniceconnectionstatechange = () => {
       const state = peerConnection.current?.iceConnectionState;
-      console.log('ICE connection state:', state);
+      console.log('[ICE] ICE connection state:', state);
       if (state) {
         setIceConnectionState(state);
       }
@@ -283,74 +288,74 @@ const VideoCall = () => {
   };
 
   const handleSignalingMessage = async (payload: any, messageType: string): Promise<void> => {
-  console.log('Handling signaling message:', messageType, payload);
+    console.log('[SIGNALING] Handling signaling message:', messageType, payload);
 
-  try {
-    // Ensure peer connection is initialized
-    if (!peerConnection.current && localStream) {
-      await initializePeerConnection(localStream);
-    }
+    try {
+      // Ensure peer connection is initialized
+      if (!peerConnection.current && localStream) {
+        await initializePeerConnection(localStream);
+      }
 
-    switch (messageType) {
-      case 'offer':
-        await handleOffer(payload.offer);
-        break;
+      switch (messageType) {
+        case 'offer':
+          await handleOffer(payload.offer);
+          break;
 
-      case 'answer':
-        await handleAnswer(payload.answer);
-        break;
+        case 'answer':
+          await handleAnswer(payload.answer);
+          break;
 
-      case 'ice-candidate':
-        await handleIceCandidate(payload.candidate);
-        break;
+        case 'ice-candidate':
+          await handleIceCandidate(payload.candidate);
+          break;
 
-      case 'join':
-        console.log('Someone joined, current signaling state:', peerConnection.current?.signalingState);
+        case 'join':
+          console.log('[SIGNALING] Someone joined, current signaling state:', peerConnection.current?.signalingState);
 
-        if (!peerConnection.current) return;
+          if (!peerConnection.current) return;
 
-        // Only create an offer if we haven't already sent one
-        // and signaling state is stable (no local offer in progress)
-        const signalingState = peerConnection.current.signalingState;
-        if (signalingState !== 'stable') break;
+          // Only create an offer if we haven't already sent one
+          // and signaling state is stable (no local offer in progress)
+          const signalingState = peerConnection.current.signalingState;
+          if (signalingState !== 'stable') break;
 
-        // Use deterministic logic for first peer, fallback timer for safety
-        const shouldInitiate = currentUser.id < payload.user?.id;
-        console.log('Should initiate connection:', shouldInitiate, 'My ID:', currentUser.id, 'Their ID:', payload.user?.id);
+          // Use deterministic logic for first peer, fallback timer for safety
+          const shouldInitiate = currentUser.id < payload.user?.id;
+          console.log('[SIGNALING] Should initiate connection:', shouldInitiate, 'My ID:', currentUser.id, 'Their ID:', payload.user?.id);
 
-        if (shouldInitiate) {
-          // Delay slightly to allow ICE gathering
-          setTimeout(() => {
-            createOffer();
-          }, 500);
-        } else {
-          // Fallback: if no offer arrives in 2 seconds, force creation
-          setTimeout(() => {
-            if (peerConnection.current && peerConnection.current.signalingState === 'stable') {
-              console.log('Fallback: creating offer to prevent deadlock');
+          if (shouldInitiate) {
+            // Delay slightly to allow ICE gathering
+            setTimeout(() => {
               createOffer();
-            }
-          }, 2000);
-        }
-        break;
+            }, 500);
+          } else {
+            // Fallback: if no offer arrives in 2 seconds, force creation
+            setTimeout(() => {
+              if (peerConnection.current && peerConnection.current.signalingState === 'stable') {
+                console.log('[SIGNALING] Fallback: creating offer to prevent deadlock');
+                createOffer();
+              }
+            }, 2000);
+          }
+          break;
+      }
+    } catch (error) {
+      console.error('[SIGNALING] Error handling signaling message:', error);
     }
-  } catch (error) {
-    console.error('Error handling signaling message:', error);
-  }
-};
+  };
 
   const createOffer = async (): Promise<void> => {
     if (!peerConnection.current) return;
 
     try {
-      console.log('Creating offer...');
+      console.log('[PEER] Creating offer...');
       const offer = await peerConnection.current.createOffer();
       await peerConnection.current.setLocalDescription(offer);
-      console.log('Offer created and set as local description');
+      console.log('[PEER] Offer created and set as local description', offer);
       
       await sendSignalingMessage('offer', { offer: offer });
     } catch (error) {
-      console.error('Error creating offer:', error);
+      console.error('[PEER] Error creating offer:', error);
     }
   };
 
@@ -359,7 +364,7 @@ const VideoCall = () => {
     if (!peerConnection.current) return;
 
     try {
-      console.log('Handling offer...');
+      console.log('[PEER] Handling offer...', offer);
       await peerConnection.current.setRemoteDescription(new RTCSessionDescription(offer));
       // Add any buffered ICE candidates
       if (pendingIceCandidates.current.length > 0) {
@@ -370,11 +375,11 @@ const VideoCall = () => {
       }
       const answer = await peerConnection.current.createAnswer();
       await peerConnection.current.setLocalDescription(answer);
-      console.log('Answer created and set as local description');
+      console.log('[PEER] Answer created and set as local description', answer);
       
       await sendSignalingMessage('answer', { answer: answer });
     } catch (error) {
-      console.error('Error handling offer:', error);
+      console.error('[PEER] Error handling offer:', error);
     }
   };
 
@@ -383,7 +388,7 @@ const VideoCall = () => {
     if (!peerConnection.current) return;
 
     try {
-      console.log('Handling answer...');
+      console.log('[PEER] Handling answer...', answer);
       await peerConnection.current.setRemoteDescription(new RTCSessionDescription(answer));
       // Add any buffered ICE candidates
       if (pendingIceCandidates.current.length > 0) {
@@ -392,9 +397,9 @@ const VideoCall = () => {
         }
         pendingIceCandidates.current = [];
       }
-      console.log('Answer set as remote description');
+      console.log('[PEER] Answer set as remote description');
     } catch (error) {
-      console.error('Error handling answer:', error);
+      console.error('[PEER] Error handling answer:', error);
     }
   };
 
@@ -404,15 +409,15 @@ const VideoCall = () => {
 
     try {
       if (peerConnection.current.remoteDescription && peerConnection.current.remoteDescription.type) {
-        console.log('Adding ICE candidate immediately:', candidate);
+        console.log('[ICE] Adding ICE candidate immediately:', candidate);
         await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
       } else {
         // Buffer ICE candidates until remote description is set
-        console.log('Buffering ICE candidate:', candidate);
+        console.log('[ICE] Buffering ICE candidate:', candidate);
         pendingIceCandidates.current.push(candidate);
       }
     } catch (error) {
-      console.error('Error adding ICE candidate:', error);
+      console.error('[ICE] Error adding ICE candidate:', error);
     }
   };
 
