@@ -35,13 +35,13 @@ const Landing = () => {
             </span>
           </h1>
           <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto animate-slide-up">
-            High-quality video calls, screen sharing, and seamless collaboration. 
-            Experience the future of remote communication.
+            High-quality translation sessions, and seamless integration. 
+            Experience the future of remote translation.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center animate-slide-up">
             <Link to="/signup">
               <Button size="lg" variant="hero" className="shadow-glow">
-                Start Free Call
+                Start Free Session
               </Button>
             </Link>
             <Button size="lg" variant="outline">
@@ -56,7 +56,7 @@ const Landing = () => {
             <Camera className="h-12 w-12 text-primary mx-auto mb-4" />
             <h3 className="text-xl font-semibold mb-3">HD Video Quality</h3>
             <p className="text-muted-foreground">
-              Crystal clear video calls with adaptive quality translation, linking deaf and non-deaf together.
+              Crystal clear translation calls with adaptive quality translation, linking deaf and non-deaf together.
             </p>
           </Card>
 
@@ -70,9 +70,9 @@ const Landing = () => {
           
           <Card className="p-8 text-center bg-gradient-surface border-0 shadow-medium hover:shadow-large transition-all">
             <MonitorSpeaker className="h-12 w-12 text-primary mx-auto mb-4" />
-            <h3 className="text-xl font-semibold mb-3">Screen Sharing</h3>
+            <h3 className="text-xl font-semibold mb-3">Fluid Avatars</h3>
             <p className="text-muted-foreground">
-              Share your screen instantly for presentations, demos, and collaboration.
+              Share your videos for instant translation and we can break barriers together.
             </p>
           </Card>
           
