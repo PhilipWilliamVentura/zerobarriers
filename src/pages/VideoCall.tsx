@@ -26,20 +26,28 @@ const VideoCall = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   
-  const [isVideoOn, setIsVideoOn] = useState(true);
-  const [isAudioOn, setIsAudioOn] = useState(true);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [isVideoOn, setIsVideoOn] = useState<boolean>(true);
+  const [isAudioOn, setIsAudioOn] = useState<boolean>(true);
+  const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [isCallStarted, setIsCallStarted] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('connecting');
-  const [currentUser, setCurrentUser] = useState(null);
+  const [isCallStarted, setIsCallStarted] = useState<boolean>(false);
+  const [connectionStatus, setConnectionStatus] = useState<string>('connecting');
+  interface UserProfile {
+    id: string;
+    name: string;
+    email: string;
+  }
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+
   const peerConnection = useRef<RTCPeerConnection | null>(null);
-  const pollingInterval = useRef(null);
-  const lastMessageId = useRef(null);
+  const pollingInterval = useRef<any>(null);
+  const lastMessageId = useRef<any>(null);
+  // Buffer for ICE candidates received before remote description is set
+  const pendingIceCandidates = useRef<any[]>([]);
 
   const [iceConnectionState, setIceConnectionState] = useState<string>('new');
 
@@ -88,7 +96,7 @@ const VideoCall = () => {
     };
   }, [roomId, currentUser]);
 
-  const pollForSignalingMessages = async () => {
+  const pollForSignalingMessages = async (): Promise<void> => {
     try {
       let query = supabase
         .from('signaling_messages')
@@ -138,7 +146,7 @@ const VideoCall = () => {
     }
   }, [localStream]);
 
-  const sendSignalingMessage = async (messageType, payload) => {
+  const sendSignalingMessage = async (messageType: string, payload: any): Promise<void> => {
     try {
       const { error } = await supabase
         .from('signaling_messages')
@@ -203,11 +211,16 @@ const VideoCall = () => {
       }
       if (peerConnection.current) {
         peerConnection.current.close();
+        peerConnection.current = null;
+      }
+      if (pollingInterval.current) {
+        clearInterval(pollingInterval.current);
+        pollingInterval.current = null;
       }
     };
   }, [currentUser]);
 
-  const initializePeerConnection = async (stream) => {
+  const initializePeerConnection = async (stream: MediaStream): Promise<void> => {
     peerConnection.current = new RTCPeerConnection(rtcConfiguration);
 
     // Add local stream to peer connection
@@ -265,9 +278,13 @@ const VideoCall = () => {
     };
   };
 
-  const handleSignalingMessage = async (payload, messageType) => {
+  const handleSignalingMessage = async (payload: any, messageType: string): Promise<void> => {
     console.log('Handling signaling message:', messageType, payload);
     try {
+      // Ensure peer connection is initialized before handling signaling
+      if (!peerConnection.current && localStream) {
+        await initializePeerConnection(localStream);
+      }
       switch (messageType) {
         case 'offer':
           await handleOffer(payload.offer);
@@ -284,8 +301,8 @@ const VideoCall = () => {
           if (peerConnection.current && peerConnection.current.signalingState === 'stable') {
             const shouldInitiate = currentUser.id < payload.user?.id;
             console.log('Should initiate connection:', shouldInitiate, 'My ID:', currentUser.id, 'Their ID:', payload.user?.id);
-            
-            if (shouldInitiate) {
+            // Only create offer if not already in have-local-offer state
+            if (shouldInitiate && peerConnection.current.signalingState === 'stable') {
               setTimeout(() => {
                 createOffer();
               }, 1000);
@@ -298,7 +315,7 @@ const VideoCall = () => {
     }
   };
 
-  const createOffer = async () => {
+  const createOffer = async (): Promise<void> => {
     if (!peerConnection.current) return;
 
     try {
@@ -313,12 +330,20 @@ const VideoCall = () => {
     }
   };
 
-  const handleOffer = async (offer) => {
+
+  const handleOffer = async (offer: RTCSessionDescriptionInit): Promise<void> => {
     if (!peerConnection.current) return;
 
     try {
       console.log('Handling offer...');
       await peerConnection.current.setRemoteDescription(new RTCSessionDescription(offer));
+      // Add any buffered ICE candidates
+      if (pendingIceCandidates.current.length > 0) {
+        for (const candidate of pendingIceCandidates.current) {
+          await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+        pendingIceCandidates.current = [];
+      }
       const answer = await peerConnection.current.createAnswer();
       await peerConnection.current.setLocalDescription(answer);
       console.log('Answer created and set as local description');
@@ -329,30 +354,45 @@ const VideoCall = () => {
     }
   };
 
-  const handleAnswer = async (answer) => {
+
+  const handleAnswer = async (answer: RTCSessionDescriptionInit): Promise<void> => {
     if (!peerConnection.current) return;
 
     try {
       console.log('Handling answer...');
       await peerConnection.current.setRemoteDescription(new RTCSessionDescription(answer));
+      // Add any buffered ICE candidates
+      if (pendingIceCandidates.current.length > 0) {
+        for (const candidate of pendingIceCandidates.current) {
+          await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+        pendingIceCandidates.current = [];
+      }
       console.log('Answer set as remote description');
     } catch (error) {
       console.error('Error handling answer:', error);
     }
   };
 
-  const handleIceCandidate = async (candidate) => {
+
+  const handleIceCandidate = async (candidate: RTCIceCandidateInit): Promise<void> => {
     if (!peerConnection.current) return;
 
     try {
-      console.log('Adding ICE candidate:', candidate);
-      await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
+      if (peerConnection.current.remoteDescription && peerConnection.current.remoteDescription.type) {
+        console.log('Adding ICE candidate immediately:', candidate);
+        await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
+      } else {
+        // Buffer ICE candidates until remote description is set
+        console.log('Buffering ICE candidate:', candidate);
+        pendingIceCandidates.current.push(candidate);
+      }
     } catch (error) {
       console.error('Error adding ICE candidate:', error);
     }
   };
 
-  const toggleVideo = () => {
+  const toggleVideo = (): void => {
     if (localStream) {
       const videoTrack = localStream.getVideoTracks()[0];
       if (videoTrack) {
@@ -362,7 +402,7 @@ const VideoCall = () => {
     }
   };
 
-  const toggleAudio = () => {
+  const toggleAudio = (): void => {
     if (localStream) {
       const audioTrack = localStream.getAudioTracks()[0];
       if (audioTrack) {
@@ -372,7 +412,7 @@ const VideoCall = () => {
     }
   };
 
-  const startScreenShare = async () => {
+  const startScreenShare = async (): Promise<void> => {
     try {
       if (isScreenSharing) {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -408,7 +448,7 @@ const VideoCall = () => {
     }
   };
 
-  const replaceTrack = async (newStream) => {
+  const replaceTrack = async (newStream: MediaStream): Promise<void> => {
     if (!peerConnection.current) return;
 
     setLocalStream(newStream);
@@ -434,7 +474,7 @@ const VideoCall = () => {
     }
   };
 
-  const endCall = async () => {
+  const endCall = async (): Promise<void> => {
     // Clean up signaling messages for this room
     await supabase
       .from('signaling_messages')
@@ -447,10 +487,12 @@ const VideoCall = () => {
     
     if (peerConnection.current) {
       peerConnection.current.close();
+      peerConnection.current = null;
     }
 
     if (pollingInterval.current) {
       clearInterval(pollingInterval.current);
+      pollingInterval.current = null;
     }
     
     toast({
@@ -461,7 +503,7 @@ const VideoCall = () => {
     navigate("/dashboard");
   };
 
-  const copyRoomId = () => {
+  const copyRoomId = (): void => {
     navigator.clipboard.writeText(roomId || "");
     toast({
       title: "Room ID copied",
